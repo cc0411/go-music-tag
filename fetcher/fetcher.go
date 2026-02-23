@@ -325,21 +325,6 @@ func (f *Fetcher) downloadImage(url string) ([]byte, error) {
 	return io.ReadAll(resp.Body)
 }
 
-// SaveLyrics 保存歌词到本地
-func (f *Fetcher) SaveLyrics(artist, title, content string) (string, error) {
-	filename := f.generateFilename(artist, title) + ".lrc"
-	filepath := filepath.Join(f.lyricsDir, filename)
-
-	log.Printf("[Fetcher] Saving lyrics to: %s", filepath)
-
-	if err := os.WriteFile(filepath, []byte(content), 0644); err != nil {
-		log.Printf("[Fetcher] Error saving lyrics: %v", err)
-		return "", err
-	}
-
-	return filepath, nil
-}
-
 // SaveCover 保存封面到本地
 func (f *Fetcher) SaveCover(artist, album string, data []byte) (string, error) {
 	if len(data) == 0 {
@@ -349,9 +334,14 @@ func (f *Fetcher) SaveCover(artist, album string, data []byte) (string, error) {
 	filename := f.generateFilename(artist, album) + ".jpg"
 	filepath := filepath.Join(f.coversDir, filename)
 
+	// ✅ 修复：如果文件已存在，直接返回成功
+	if _, err := os.Stat(filepath); err == nil {
+		log.Printf("[Fetcher] Cover already exists: %s", filepath)
+		return filepath, nil
+	}
+
 	log.Printf("[Fetcher] Saving cover to: %s (size: %d bytes)", filepath, len(data))
 
-	// 再次确保目录存在
 	if err := os.MkdirAll(f.coversDir, 0755); err != nil {
 		log.Printf("[Fetcher] Error creating directory: %v", err)
 		return "", fmt.Errorf("failed to create covers directory: %w", err)
@@ -362,13 +352,33 @@ func (f *Fetcher) SaveCover(artist, album string, data []byte) (string, error) {
 		return "", fmt.Errorf("failed to write cover file: %w", err)
 	}
 
-	// 验证文件是否真的存在
 	if _, err := os.Stat(filepath); os.IsNotExist(err) {
 		log.Printf("[Fetcher] CRITICAL: File written but does not exist!")
 		return "", fmt.Errorf("file system error")
 	}
 
 	log.Printf("[Fetcher] Cover saved successfully: %s", filepath)
+	return filepath, nil
+}
+
+// SaveLyrics 同理修复
+func (f *Fetcher) SaveLyrics(artist, title, content string) (string, error) {
+	filename := f.generateFilename(artist, title) + ".lrc"
+	filepath := filepath.Join(f.lyricsDir, filename)
+
+	// ✅ 修复：如果文件已存在，直接返回成功
+	if _, err := os.Stat(filepath); err == nil {
+		log.Printf("[Fetcher] Lyrics already exists: %s", filepath)
+		return filepath, nil
+	}
+
+	log.Printf("[Fetcher] Saving lyrics to: %s", filepath)
+
+	if err := os.WriteFile(filepath, []byte(content), 0644); err != nil {
+		log.Printf("[Fetcher] Error saving lyrics: %v", err)
+		return "", err
+	}
+
 	return filepath, nil
 }
 

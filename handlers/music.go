@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"errors" // ✅ 新增
 	"fmt"
 	"go-music-tag/database"
 	"go-music-tag/fetcher"
@@ -83,16 +84,22 @@ type BatchUpdateRequest struct {
 }
 
 // BatchStatus 批量操作状态
+
 type BatchStatus struct {
-	Running  bool   `json:"running"`
-	TaskType string `json:"task_type"` // lyrics, covers, all
-	Total    int    `json:"total"`
-	Current  int    `json:"current"`
-	Success  int    `json:"success"`
-	Failed   int    `json:"failed"`
-	Message  string `json:"message"`
+	Running   bool      `json:"running"`
+	TaskType  string    `json:"task_type"`
+	Total     int       `json:"total"`
+	Current   int       `json:"current"`
+	Success   int       `json:"success"`
+	Failed    int       `json:"failed"`
+	Message   string    `json:"message"`
+	CreatedAt time.Time `json:"created_at"` // 可选
 }
 
+var (
+	batchStatus = &BatchStatus{Running: false}
+	statusMutex sync.Mutex
+)
 var (
 	scanTaskID = ""
 	scanMutex  sync.Mutex
@@ -166,63 +173,113 @@ func (h *MusicHandler) resetWebDAVClient() {
 	h.davMutex.Unlock()
 }
 
+// Scan 扫描音乐库
 func (h *MusicHandler) Scan(c *gin.Context) {
-	var dbConfig models.WebDAVConfig
-	result := h.db.First(&dbConfig)
-	if result.Error != nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"code":    503,
-			"message": "WebDAV not configured. Please configure WebDAV first.",
-		})
-		return
-	}
+	db := h.getDB()
 
-	if !dbConfig.Enabled {
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"code":    503,
-			"message": "WebDAV is disabled. Please enable it first.",
-		})
-		return
-	}
-
-	client, err := h.getWebDAVClient()
-	if err != nil {
-		h.resetWebDAVClient()
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"code":    503,
-			"message": "WebDAV connection failed: " + err.Error(),
-		})
-		return
-	}
-
-	scanMutex.Lock()
-	if scanTaskID != "" {
-		scanMutex.Unlock()
+	// ✅ 修复：检查是否有批量任务在运行
+	statusMutex.Lock()
+	if batchStatus.Running {
+		statusMutex.Unlock()
 		c.JSON(http.StatusConflict, gin.H{
 			"code":    409,
-			"message": "Scan task is already running",
+			"message": "Please wait for batch task to complete before scanning",
 		})
+		return
+	}
+	statusMutex.Unlock()
+
+	// ✅ 修复：使用 TRUNCATE 或 DELETE 清空旧数据
+	db.Exec("DELETE FROM music")
+	db.Exec("DELETE FROM scan_logs")
+
+	var cfg models.WebDAVConfig
+	if err := db.First(&cfg).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": "WebDAV not configured"})
+		return
+	}
+
+	client, err := webdav.NewClientWithConfig(cfg.URL, cfg.Username, cfg.Password, cfg.RootPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": err.Error()})
+		return
+	}
+
+	files, err := client.ListMP3FilesRecursive()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "message": err.Error()})
 		return
 	}
 
 	taskID := time.Now().Format("20060102150405")
-	scanTaskID = taskID
-	scanMutex.Unlock()
+	total := len(files)
+	success := 0
+	failed := 0
 
-	var req ScanRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		req.Recursive = true
-	}
+	go func() {
+		for i, file := range files {
+			log.Printf("Processing [%d/%d]: %s", i+1, total, file.Name)
+			h.logScan(taskID, fmt.Sprintf("Processing [%d/%d]: %s", i+1, total, file.Name), "info")
 
-	go h.runScan(taskID, req.Recursive, client)
+			data, err := client.GetFile(file.Path)
+			if err != nil {
+				log.Printf("Failed to get file %s: %v", file.Name, err)
+				h.logScan(taskID, fmt.Sprintf("Failed to get file %s: %v", file.Name, err), "error")
+				failed++
+				continue
+			}
 
-	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
-		"message": "Scan task started",
-		"data": gin.H{
-			"task_id": taskID,
-		},
-	})
+			metadata, err := tag.ReadFrom(strings.NewReader(string(data)))
+
+			scanTime := time.Now()
+			music := models.Music{
+				FilePath:   file.Path,
+				FileName:   file.Name,
+				FileSize:   file.Size,
+				ScanStatus: "success",
+				ScannedAt:  &scanTime,
+			}
+
+			if err == nil && metadata != nil {
+				music.Title = metadata.Title()
+				music.Artist = metadata.Artist()
+				music.Album = metadata.Album()
+				music.Year = metadata.Year()
+				music.Genre = metadata.Genre()
+				music.Duration = 0
+
+				picture := metadata.Picture()
+				if picture != nil && len(picture.Data) > 0 {
+					music.HasCover = true
+					music.CoverMIME = "image/jpeg"
+				}
+			} else {
+				music.Title = file.Name
+			}
+
+			// ✅ 修复：使用 FirstOrCreate 避免唯一约束冲突
+			var existing models.Music
+			result := db.Where("file_path = ?", file.Path).First(&existing)
+			if result.Error == nil {
+				// 文件已存在，更新
+				db.Model(&existing).Updates(music)
+			} else {
+				// 新文件，插入
+				db.Create(&music)
+			}
+
+			if result.Error == nil || errors.Is(result.Error, gorm.ErrRecordNotFound) {
+				success++
+			} else {
+				log.Printf("Failed to save %s: %v", file.Name, result.Error)
+				h.logScan(taskID, fmt.Sprintf("Failed to save %s: %v", file.Name, result.Error), "error")
+				failed++
+			}
+		}
+		h.logScan(taskID, fmt.Sprintf("Scan completed. Total: %d, Success: %d, Failed: %d", total, success, failed), "info")
+	}()
+
+	c.JSON(http.StatusOK, gin.H{"code": 0, "message": "Scan started", "task_id": taskID})
 }
 
 func (h *MusicHandler) runScan(taskID string, recursive bool, client *webdav.Client) {
@@ -443,16 +500,21 @@ func (h *MusicHandler) FetchCover(c *gin.Context) {
 	})
 }
 
-// 全局批量操作状态 (简单实现，生产环境建议用 Redis)
-var batchStatus = &BatchStatus{
-	Running: false,
-}
-
 // GetBatchStatus 获取批量操作状态
 func (h *MusicHandler) GetBatchStatus(c *gin.Context) {
+	// ✅ 第一步：加锁
+	statusMutex.Lock()
+
+	// ✅ 第二步：安全地拷贝当前状态 (避免返回指针导致的数据竞争)
+	currentStatus := *batchStatus
+
+	// ✅ 第三步：立即解锁 (减少锁持有时间，提高并发性能)
+	statusMutex.Unlock()
+
+	// ✅ 第四步：使用拷贝出来的局部变量返回给前端
 	c.JSON(http.StatusOK, gin.H{
 		"code": 0,
-		"data": batchStatus,
+		"data": currentStatus, // <--- 注意这里用的是 currentStatus，不是 batchStatus
 	})
 }
 
@@ -476,7 +538,8 @@ func (h *MusicHandler) BatchFetchLyrics(c *gin.Context) {
 		})
 		return
 	}
-
+	// ✅ 修复：使用锁保护状态检查
+	statusMutex.Lock()
 	// ✅ 关键修复：检查并返回
 	if batchStatus.Running {
 		c.JSON(409, gin.H{
@@ -488,14 +551,16 @@ func (h *MusicHandler) BatchFetchLyrics(c *gin.Context) {
 
 	// 初始化状态
 	batchStatus = &BatchStatus{
-		Running:  true,
-		TaskType: "lyrics",
-		Total:    len(musicList),
-		Current:  0,
-		Success:  0,
-		Failed:   0,
-		Message:  "Starting...",
+		Running:   true,
+		TaskType:  "lyrics",
+		Total:     len(musicList),
+		Current:   0,
+		Success:   0,
+		Failed:    0,
+		Message:   "Starting...",
+		CreatedAt: time.Now(),
 	}
+	statusMutex.Unlock()
 
 	go func() {
 		f := fetcher.NewFetcher("/app/data/lyrics", "/app/data/covers")
@@ -503,10 +568,11 @@ func (h *MusicHandler) BatchFetchLyrics(c *gin.Context) {
 		failed := 0
 
 		for i, music := range musicList {
+			statusMutex.Lock()
 			batchStatus.Current = i + 1
 			batchStatus.Message = fmt.Sprintf("Processing: %s", music.Title)
 			batchStatus.Total = len(musicList) // 确保 Total 始终正确
-
+			statusMutex.Unlock()
 			lyricsPath, _, err := f.FetchAndSave(music.Artist, music.Title, music.Album)
 
 			// ✅ 修复：只要 lyricsPath 不为空，就算成功
@@ -521,14 +587,16 @@ func (h *MusicHandler) BatchFetchLyrics(c *gin.Context) {
 			}
 
 			// 实时更新状态
+			statusMutex.Lock()
 			batchStatus.Success = success
 			batchStatus.Failed = failed
-
+			statusMutex.Unlock()
 			time.Sleep(800 * time.Millisecond)
 		}
-
+		statusMutex.Lock()
 		batchStatus.Running = false
 		batchStatus.Message = "Completed"
+		statusMutex.Unlock()
 		log.Printf("[Batch] 🎉 Lyrics batch done: total=%d, success=%d, failed=%d", len(musicList), success, failed)
 	}()
 
@@ -562,9 +630,10 @@ func (h *MusicHandler) BatchFetchCovers(c *gin.Context) {
 		})
 		return
 	}
-
+	statusMutex.Lock()
 	// ✅ 关键修复：检查并返回
 	if batchStatus.Running {
+		statusMutex.Unlock()
 		c.JSON(409, gin.H{
 			"code":    409,
 			"message": "Another batch task is running",
@@ -573,25 +642,27 @@ func (h *MusicHandler) BatchFetchCovers(c *gin.Context) {
 	}
 
 	batchStatus = &BatchStatus{
-		Running:  true,
-		TaskType: "covers",
-		Total:    len(musicList),
-		Current:  0,
-		Success:  0,
-		Failed:   0,
-		Message:  "Starting...",
+		Running:   true,
+		TaskType:  "covers",
+		Total:     len(musicList),
+		Current:   0,
+		Success:   0,
+		Failed:    0,
+		Message:   "Starting...",
+		CreatedAt: time.Now(),
 	}
-
+	statusMutex.Unlock()
 	go func() {
 		f := fetcher.NewFetcher("/app/data/lyrics", "/app/data/covers")
 		success := 0
 		failed := 0
 
 		for i, music := range musicList {
+			statusMutex.Lock()
 			batchStatus.Current = i + 1
 			batchStatus.Message = fmt.Sprintf("Processing: %s", music.Title)
 			batchStatus.Total = len(musicList)
-
+			statusMutex.Unlock()
 			_, coverPath, err := f.FetchAndSave(music.Artist, music.Title, music.Album)
 
 			// ✅ 修复：只要 coverPath 不为空，就算成功
@@ -605,15 +676,16 @@ func (h *MusicHandler) BatchFetchCovers(c *gin.Context) {
 				failed++
 				log.Printf("[Batch] ❌ %s: Cover failed (%v)", music.Title, err)
 			}
-
+			statusMutex.Lock()
 			batchStatus.Success = success
 			batchStatus.Failed = failed
-
+			statusMutex.Unlock()
 			time.Sleep(800 * time.Millisecond)
 		}
-
+		statusMutex.Lock()
 		batchStatus.Running = false
 		batchStatus.Message = "Completed"
+		statusMutex.Unlock()
 		log.Printf("[Batch] 🎉 Cover batch done: total=%d, success=%d, failed=%d", len(musicList), success, failed)
 	}()
 
