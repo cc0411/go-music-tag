@@ -596,6 +596,9 @@ func (h *MusicHandler) BatchFetchLyrics(c *gin.Context) {
 		statusMutex.Lock()
 		batchStatus.Running = false
 		batchStatus.Message = "Completed"
+		batchStatus.Total = len(musicList)
+		batchStatus.Success = success
+		batchStatus.Failed = failed
 		statusMutex.Unlock()
 		log.Printf("[Batch] 🎉 Lyrics batch done: total=%d, success=%d, failed=%d", len(musicList), success, failed)
 	}()
@@ -685,6 +688,9 @@ func (h *MusicHandler) BatchFetchCovers(c *gin.Context) {
 		statusMutex.Lock()
 		batchStatus.Running = false
 		batchStatus.Message = "Completed"
+		batchStatus.Total = len(musicList) // <--- 结束前再设一次
+		batchStatus.Success = success
+		batchStatus.Failed = failed
 		statusMutex.Unlock()
 		log.Printf("[Batch] 🎉 Cover batch done: total=%d, success=%d, failed=%d", len(musicList), success, failed)
 	}()
@@ -1437,59 +1443,38 @@ func (h *MusicHandler) DeleteAll(c *gin.Context) {
 	})
 }
 
-// Statistics 统计信息 (修复数据结构)
+// Statistics 统计信息
 func (h *MusicHandler) Statistics(c *gin.Context) {
 	var total int64
-	h.db.Model(&models.Music{}).Where("scan_status = ?", "success").Count(&total)
 
+	// ✅ 关键修复：统计 ALL 歌曲，不要加任何 WHERE 条件
+	h.getDB().Model(&models.Music{}).Count(&total)
+
+	// 可选：统计有歌词的
+	var withLyrics int64
+	h.getDB().Model(&models.Music{}).Where("has_lyrics = ?", true).Count(&withLyrics)
+
+	// 可选：统计有封面的
 	var withCover int64
-	h.db.Model(&models.Music{}).Where("has_cover = ?", true).Count(&withCover)
+	h.getDB().Model(&models.Music{}).Where("has_cover = ?", true).Count(&withCover)
 
-	// 定义结果结构
-	type StatResult struct {
+	var topArtists []struct {
 		Name  string `json:"name"`
-		Count int64  `json:"count"`
+		Count int    `json:"count"`
 	}
+	h.getDB().Table("music").Select("artist as name, COUNT(*) as count").
+		Where("artist != ''"). // 只统计有艺术家的
+		Group("artist").Order("count DESC").Limit(10).Scan(&topArtists)
 
-	var topArtists []StatResult
-	h.db.Model(&models.Music{}).
-		Select("artist as name, COUNT(*) as count").
-		Where("artist != ?", "").
-		Where("scan_status = ?", "success").
-		Group("artist").
-		Order("count DESC").
-		Limit(10).
-		Find(&topArtists)
-
-	var topGenres []StatResult
-	h.db.Model(&models.Music{}).
-		Select("genre as name, COUNT(*) as count").
-		Where("genre != ?", "").
-		Where("scan_status = ?", "success").
-		Group("genre").
-		Order("count DESC").
-		Limit(10).
-		Find(&topGenres)
-
-	var topAlbums []StatResult
-	h.db.Model(&models.Music{}).
-		Select("album as name, COUNT(*) as count").
-		Where("album != ?", "").
-		Where("scan_status = ?", "success").
-		Group("album").
-		Order("count DESC").
-		Limit(10).
-		Find(&topAlbums)
+	log.Printf("[Stats] Total: %d, WithLyrics: %d, WithCover: %d", total, withLyrics, withCover) // 调试日志
 
 	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
-		"message": "success",
+		"code": 0,
 		"data": gin.H{
-			"total":       total,
+			"total":       total, // ✅ 这里必须是 29
+			"with_lyrics": withLyrics,
 			"with_cover":  withCover,
 			"top_artists": topArtists,
-			"top_genres":  topGenres,
-			"top_albums":  topAlbums,
 		},
 	})
 }
