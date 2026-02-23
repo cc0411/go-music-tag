@@ -148,16 +148,101 @@ func (f *Fetcher) searchNeteaseLyrics(artist, title string) (*LyricResult, error
 }
 
 func (f *Fetcher) SearchCover(artist, album string) (*CoverResult, error) {
+	// 1. 先试网易云
 	result, err := f.searchNeteaseCover(artist, album)
 	if err == nil && result != nil {
 		return result, nil
 	}
-	return nil, fmt.Errorf("cover not found")
+
+	// 2. 网易云失败，试 iTunes
+	log.Printf("[Fetcher] Netease failed, trying iTunes...")
+	itunesResult, err := f.searchItunesCover(artist, album)
+	if err == nil && itunesResult != nil {
+		return itunesResult, nil
+	}
+
+	return nil, fmt.Errorf("cover not found in any source")
+}
+
+func (f *Fetcher) searchItunesCover(artist, album string) (*CoverResult, error) {
+	term := url.QueryEscape(album + " " + artist)
+	apiURL := fmt.Sprintf("https://itunes.apple.com/search?term=%s&media=music&limit=1", term)
+
+	resp, err := f.client.Get(apiURL)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Results []struct {
+			ArtworkURL100 string `json:"artworkUrl100"`
+		} `json:"results"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	if len(result.Results) == 0 {
+		return nil, fmt.Errorf("itunes: no results")
+	}
+
+	// iTunes 返回的是 100x100 小图，替换成大图
+	coverURL := strings.Replace(result.Results[0].ArtworkURL100, "100x100bb", "600x600bb", 1)
+
+	data, err := f.downloadImage(coverURL)
+	if err != nil {
+		return nil, err
+	}
+
+	return &CoverResult{
+		URL:    coverURL,
+		Data:   data,
+		Source: "itunes",
+	}, nil
 }
 
 func (f *Fetcher) searchNeteaseCover(artist, album string) (*CoverResult, error) {
+	// 定义多种搜索组合，按优先级尝试
+	searchTerms := []string{}
+
+	// 1. 优先：专辑名 + 歌手
+	if album != "" && artist != "" {
+		searchTerms = append(searchTerms, album+" "+artist)
+	}
+
+	// 2. 次选：仅专辑名
+	if album != "" {
+		searchTerms = append(searchTerms, album)
+	}
+
+	// 3. 再次：歌名 + 歌手 (把 album 当作歌名重试)
+	if album != "" && artist != "" {
+		// 有时候 album 字段存的是歌名
+		searchTerms = append(searchTerms, album)
+	}
+
+	// 4. 最后：仅歌手
+	if artist != "" && artist != "Various Artists" {
+		searchTerms = append(searchTerms, artist)
+	}
+
+	// 遍历所有搜索词
+	for _, term := range searchTerms {
+		result, err := f.searchWithTerm(term)
+		if err == nil && result != nil {
+			return result, nil
+		}
+	}
+
+	return nil, fmt.Errorf("cover not found after trying all combinations")
+}
+
+// 辅助函数：用特定关键词搜索
+func (f *Fetcher) searchWithTerm(term string) (*CoverResult, error) {
 	searchURL := fmt.Sprintf("https://music.163.com/api/search/get?type=1&s=%s",
-		url.QueryEscape(album+" "+artist))
+		url.QueryEscape(term))
 
 	req, err := http.NewRequest("GET", searchURL, nil)
 	if err != nil {
@@ -181,7 +266,12 @@ func (f *Fetcher) searchNeteaseCover(artist, album string) (*CoverResult, error)
 			Songs []struct {
 				Album struct {
 					PicURL string `json:"picUrl"`
+					Name   string `json:"name"` // 添加专辑名用于验证
 				} `json:"album"`
+				Name    string `json:"name"` // 歌名
+				Artists []struct {
+					Name string `json:"name"`
+				} `json:"artists"`
 			} `json:"songs"`
 		} `json:"result"`
 	}
@@ -191,26 +281,32 @@ func (f *Fetcher) searchNeteaseCover(artist, album string) (*CoverResult, error)
 	}
 
 	if len(result.Result.Songs) == 0 {
-		return nil, fmt.Errorf("no songs found")
+		return nil, fmt.Errorf("no songs found for: %s", term)
 	}
 
-	picURL := result.Result.Songs[0].Album.PicURL
-	if picURL == "" {
-		return nil, fmt.Errorf("no cover")
+	// 遍历结果，找到最匹配的
+	for _, song := range result.Result.Songs {
+		picURL := song.Album.PicURL
+		if picURL != "" && !strings.Contains(picURL, "default_album") {
+			// 排除默认专辑封面
+			picURL = strings.Replace(picURL, "http://", "https://", 1)
+
+			log.Printf("[Fetcher] Found cover for '%s': %s", term, picURL)
+
+			coverData, err := f.downloadImage(picURL)
+			if err != nil {
+				continue
+			}
+
+			return &CoverResult{
+				URL:    picURL,
+				Data:   coverData,
+				Source: "netease",
+			}, nil
+		}
 	}
 
-	picURL = strings.Replace(picURL, "http://", "https://", 1)
-
-	coverData, err := f.downloadImage(picURL)
-	if err != nil {
-		return nil, err
-	}
-
-	return &CoverResult{
-		URL:    picURL,
-		Data:   coverData,
-		Source: "netease",
-	}, nil
+	return nil, fmt.Errorf("no valid cover found for: %s", term)
 }
 
 func (f *Fetcher) downloadImage(url string) ([]byte, error) {
