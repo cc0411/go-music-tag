@@ -1462,19 +1462,49 @@ func (h *MusicHandler) Statistics(c *gin.Context) {
 		Name  string `json:"name"`
 		Count int    `json:"count"`
 	}
-	h.getDB().Table("music").Select("artist as name, COUNT(*) as count").
-		Where("artist != ''"). // 只统计有艺术家的
-		Group("artist").Order("count DESC").Limit(10).Scan(&topArtists)
+	h.getDB().Table("music").
+		Select("artist as name, COUNT(*) as count").
+		Where("artist != '' AND artist IS NOT NULL").
+		Group("artist").
+		Order("count DESC").
+		Limit(10).
+		Scan(&topArtists)
 
 	log.Printf("[Stats] Total: %d, WithLyrics: %d, WithCover: %d", total, withLyrics, withCover) // 调试日志
+
+	var topAlbums []struct {
+		Name  string `json:"name"`
+		Count int    `json:"count"`
+	}
+	h.getDB().Table("music").
+		Select("album as name, COUNT(*) as count").
+		Where("album != '' AND album IS NOT NULL").
+		Group("album").
+		Order("count DESC").
+		Limit(10).
+		Scan(&topAlbums)
+
+	var topGenres []struct {
+		Name  string `json:"name"`
+		Count int    `json:"count"`
+	}
+	h.getDB().Table("music").
+		Select("genre as name, COUNT(*) as count").
+		Where("genre != '' AND genre IS NOT NULL").
+		Group("genre").
+		Order("count DESC").
+		Limit(10).
+		Scan(&topGenres)
+
+	log.Printf("[Stats] Total: %d, Artists: %v", total, topArtists) // 调试日志
 
 	c.JSON(http.StatusOK, gin.H{
 		"code": 0,
 		"data": gin.H{
-			"total":       total, // ✅ 这里必须是 29
-			"with_lyrics": withLyrics,
-			"with_cover":  withCover,
+			"total":       total,
 			"top_artists": topArtists,
+			"top_albums":  topAlbums,
+			"top_genres":  topGenres,
 		},
 	})
 }

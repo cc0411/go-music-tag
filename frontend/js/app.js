@@ -108,6 +108,31 @@ async function loadDashboard() {
         document.getElementById('stat-with-cover').textContent = data.with_cover || 0;
         
         // ... 渲染艺术家列表等
+        // 2. 艺术家数量 (数组长度)
+        const artists = data.top_artists || [];
+        document.getElementById('stat-artists').textContent = artists.length; 
+        
+        // 3. 专辑数量
+        const albums = data.top_albums || [];
+        document.getElementById('stat-albums').textContent = albums.length;
+
+        // 4. 流派数量
+        const genres = data.top_genres || [];
+        document.getElementById('stat-genres').textContent = genres.length;
+
+        // 5. 渲染热门艺术家列表
+        const artistsListEl = document.getElementById('top-artists');
+        if (artists.length === 0) {
+            artistsListEl.innerHTML = '<div class="no-data">暂无数据</div>';
+        } else {
+            artistsListEl.innerHTML = artists.map((a, i) => `
+                <div class="list-item">
+                    <span class="rank">${i + 1}</span>
+                    <span class="name">${escapeHtml(a.name)}</span>
+                    <span class="count">${a.count}首</span>
+                </div>
+            `).join('');
+        }
         
     } catch (e) {
         console.error('加载仪表盘失败:', e);
