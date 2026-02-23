@@ -93,47 +93,96 @@ async function checkServerStatus() {
 async function loadDashboard() {
     try {
         const res = await fetch(`${API_BASE}/statistics`);
+        if (!res.ok) throw new Error('Network response was not ok');
+        
         const json = await res.json();
         
+        // ✅ 关键：先打印出来，方便调试
+        console.log('Dashboard Data Received:', json.data);
+
         if (!json.data) return;
         const data = json.data;
 
-        console.log('Dashboard Data:', data); // 调试日志
-
-        // ✅ 直接显示后端返回的总数
+        // 1. 更新总数卡片
         document.getElementById('stat-total').textContent = data.total || 0;
-        
-        // 其他统计...
-        document.getElementById('stat-with-lyrics').textContent = data.with_lyrics || 0;
-        document.getElementById('stat-with-cover').textContent = data.with_cover || 0;
-        
-        // ... 渲染艺术家列表等
-        // 2. 艺术家数量 (数组长度)
-        const artists = data.top_artists || [];
-        document.getElementById('stat-artists').textContent = artists.length; 
-        
-        // 3. 专辑数量
+
+        // 2. 处理艺术家数据
+        const artists = data.top_artists || []; // 确保是数组
+        // ✅ 修复：显示艺术家的数量（数组长度）
+        const artistCountEl = document.getElementById('stat-artists');
+        if (artistCountEl) {
+            artistCountEl.textContent = artists.length; 
+        }
+
+        // 3. 处理专辑数据
         const albums = data.top_albums || [];
-        document.getElementById('stat-albums').textContent = albums.length;
+        const albumCountEl = document.getElementById('stat-albums');
+        if (albumCountEl) {
+            albumCountEl.textContent = albums.length;
+        }
 
-        // 4. 流派数量
-        const genres = data.top_genres || [];
-        document.getElementById('stat-genres').textContent = genres.length;
+        // 4. 处理流派数据
+        const genres = data.top_genres || []; // 后端返回 null 时，这里会变成 []
+        const genreCountEl = document.getElementById('stat-genres');
+        if (genreCountEl) {
+            genreCountEl.textContent = genres.length;
+        }
 
-        // 5. 渲染热门艺术家列表
+        // 5. ✅ 关键修复：渲染"热门艺术家"列表
         const artistsListEl = document.getElementById('top-artists');
-        if (artists.length === 0) {
-            artistsListEl.innerHTML = '<div class="no-data">暂无数据</div>';
-        } else {
-            artistsListEl.innerHTML = artists.map((a, i) => `
-                <div class="list-item">
-                    <span class="rank">${i + 1}</span>
-                    <span class="name">${escapeHtml(a.name)}</span>
-                    <span class="count">${a.count}首</span>
-                </div>
-            `).join('');
+        if (artistsListEl) {
+            if (artists.length === 0) {
+                artistsListEl.innerHTML = '<div class="no-data" style="padding:20px;text-align:center;color:#999;">暂无数据</div>';
+            } else {
+                // 生成 HTML
+                artistsListEl.innerHTML = artists.map((item, index) => `
+                    <div class="list-item" style="display:flex;justify-content:space-between;padding:12px;border-bottom:1px solid #eee;">
+                        <div style="display:flex;align-items:center;gap:10px;">
+                            <span style="background:#f3f4f6;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:bold;color:#666;">${index + 1}</span>
+                            <span style="font-weight:500;">${escapeHtml(item.name)}</span>
+                        </div>
+                        <span style="color:#666;font-size:0.9rem;">${item.count} 首</span>
+                    </div>
+                `).join('');
+            }
+        }
+
+        // 6. 渲染"热门专辑"列表 (如果页面有的话)
+        const albumsListEl = document.getElementById('top-albums');
+        if (albumsListEl) {
+             if (albums.length === 0) {
+                albumsListEl.innerHTML = '<div class="no-data" style="padding:20px;text-align:center;color:#999;">暂无数据</div>';
+            } else {
+                albumsListEl.innerHTML = albums.map((item, index) => `
+                    <div class="list-item" style="display:flex;justify-content:space-between;padding:12px;border-bottom:1px solid #eee;">
+                        <div style="display:flex;align-items:center;gap:10px;">
+                            <span style="background:#f3f4f6;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:bold;color:#666;">${index + 1}</span>
+                            <span style="font-weight:500;">${escapeHtml(item.name)}</span>
+                        </div>
+                        <span style="color:#666;font-size:0.9rem;">${item.count} 首</span>
+                    </div>
+                `).join('');
+            }
         }
         
+        // 7. 渲染"热门流派"列表
+        const genresListEl = document.getElementById('top-genres');
+        if (genresListEl) {
+             if (genres.length === 0) {
+                genresListEl.innerHTML = '<div class="no-data" style="padding:20px;text-align:center;color:#999;">暂无数据</div>';
+            } else {
+                genresListEl.innerHTML = genres.map((item, index) => `
+                    <div class="list-item" style="display:flex;justify-content:space-between;padding:12px;border-bottom:1px solid #eee;">
+                        <div style="display:flex;align-items:center;gap:10px;">
+                            <span style="background:#f3f4f6;width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:bold;color:#666;">${index + 1}</span>
+                            <span style="font-weight:500;">${escapeHtml(item.name)}</span>
+                        </div>
+                        <span style="color:#666;font-size:0.9rem;">${item.count} 首</span>
+                    </div>
+                `).join('');
+            }
+        }
+
     } catch (e) {
         console.error('加载仪表盘失败:', e);
     }
