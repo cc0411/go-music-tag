@@ -1,0 +1,26 @@
+# 构建输出
+music
+*.exe
+*.dll
+*.so
+
+# 数据文件
+data/
+*.db
+*.sqlite
+
+# 日志
+*.log
+logs/
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+
+# 文档
+*.md
+README*

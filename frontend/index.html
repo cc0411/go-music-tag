@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎵 音乐标签管理系统</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="app-container">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <span class="logo-icon">🎵</span>
+                    <span class="logo-text">音乐标签</span>
+                </div>
+            </div>
+            <nav class="sidebar-nav">
+                <a href="#dashboard" class="nav-item active" data-page="dashboard">
+                    <span class="nav-icon">📊</span>
+                    <span class="nav-text">仪表盘</span>
+                </a>
+                <a href="#music" class="nav-item" data-page="music">
+                    <span class="nav-icon">🎶</span>
+                    <span class="nav-text">音乐库</span>
+                </a>
+                <a href="#player" class="nav-item" data-page="player">
+                    <span class="nav-icon">🎧</span>
+                    <span class="nav-text">播放器</span>
+                </a>
+                <a href="#webdav" class="nav-item" data-page="webdav">
+                    <span class="nav-icon">☁️</span>
+                    <span class="nav-text">WebDAV</span>
+                </a>
+                <a href="#scan" class="nav-item" data-page="scan">
+                    <span class="nav-icon">🔍</span>
+                    <span class="nav-text">扫描管理</span>
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <div class="server-status">
+                    <span class="status-dot" id="server-status"></span>
+                    <span id="status-text">连接中...</span>
+                </div>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            <header class="top-bar">
+                <h1 id="page-title">仪表盘</h1>
+                <div class="header-actions">
+                    <button class="btn-icon" onclick="refreshCurrentPage()" title="刷新">🔄</button>
+                </div>
+            </header>
+
+            <section id="dashboard-page" class="page active">
+                <div class="stats-grid">
+                    <div class="stat-card stat-total">
+                        <div class="stat-icon">🎶</div>
+                        <div class="stat-info">
+                            <h3 id="stat-total">0</h3>
+                            <p>音乐总数</p>
+                        </div>
+                    </div>
+                    <div class="stat-card stat-artists">
+                        <div class="stat-icon">👤</div>
+                        <div class="stat-info">
+                            <h3 id="stat-artists">0</h3>
+                            <p>艺术家</p>
+                        </div>
+                    </div>
+                    <div class="stat-card stat-albums">
+                        <div class="stat-icon">💿</div>
+                        <div class="stat-info">
+                            <h3 id="stat-albums">0</h3>
+                            <p>专辑</p>
+                        </div>
+                    </div>
+                    <div class="stat-card stat-genres">
+                        <div class="stat-icon">🎨</div>
+                        <div class="stat-info">
+                            <h3 id="stat-genres">0</h3>
+                            <p>流派</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="dashboard-grid">
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>🏆 热门艺术家</h3>
+                        </div>
+                        <ul id="top-artists" class="rank-list"></ul>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>🎭 热门流派</h3>
+                        </div>
+                        <ul id="top-genres" class="rank-list"></ul>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <h3>🚀 快速操作</h3>
+                    </div>
+                    <div class="quick-actions">
+                        <button class="action-btn" onclick="nav('scan')">
+                            <span class="action-icon">🚀</span>
+                            <span>开始扫描</span>
+                        </button>
+                        <button class="action-btn" onclick="nav('webdav')">
+                            <span class="action-icon">☁️</span>
+                            <span>配置 WebDAV</span>
+                        </button>
+                        <button class="action-btn" onclick="nav('music')">
+                            <span class="action-icon">🎶</span>
+                            <span>查看音乐</span>
+                        </button>
+                        <button class="action-btn" onclick="nav('player')">
+                            <span class="action-icon">🎧</span>
+                            <span>打开播放器</span>
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <section id="music-page" class="page">
+                <div id="batch-toolbar" class="batch-toolbar">
+                    <span class="batch-info">已选择 <strong id="batch-count">0</strong> 首音乐</span>
+                    <div class="batch-actions">
+                        <button class="btn btn-sm" onclick="showBatchModal()">✏️ 批量编辑</button>
+                        <button class="btn btn-primary btn-sm" onclick="playSelected()">▶️ 播放选中</button>
+                        <button class="btn btn-danger btn-sm" onclick="batchDelete()">🗑️ 批量删除</button>
+                        <button class="btn btn-sm" onclick="selectedMusicIds=[];updateBatchToolbar()">取消选择</button>
+                    </div>
+                </div>
+                <div class="toolbar">
+                    <div class="search-box">
+                        <input type="text" id="music-search" placeholder="搜索音乐、艺术家、专辑...">
+                        <button class="btn btn-primary" onclick="searchMusic()">🔍 搜索</button>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="table-container">
+                        <table class="music-table">
+                            <thead>
+                                <tr>
+                                    <th class="col-select"><input type="checkbox" class="select-checkbox" onchange="toggleSelectAll()"></th>
+                                    <th class="col-title">标题</th>
+                                    <th class="col-artist">艺术家</th>
+                                    <th class="col-album">专辑</th>
+                                    <th class="col-duration">时长</th>
+                                    <th class="col-actions">操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="music-list">
+                                <tr><td colspan="6" class="loading"><div class="spinner"></div>加载中...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="pagination">
+                    <button class="btn btn-sm" onclick="prevPage()" id="prev-btn">⏮ 上一页</button>
+                    <span class="page-info" id="page-info">第 1 页</span>
+                    <button class="btn btn-sm" onclick="nextPage()" id="next-btn">下一页 ⏭</button>
+                </div>
+            </section>
+
+            <section id="player-page" class="page">
+                <div class="player-wrapper">
+                    <div class="player-main">
+                        <div class="player-cover-section">
+                            <div class="cover-wrapper" id="player-cover">
+                                <div class="cover-placeholder">🎵</div>
+                                <img id="cover-image" class="cover-image" style="display:none;" alt="专辑封面">
+                                <div class="cover-loading" id="cover-loading" style="display:none;">
+                                    <div class="spinner-large"></div>
+                                    <p>加载中...</p>
+                                </div>
+                            </div>
+                            <h2 class="player-title" id="player-title">未播放</h2>
+                            <p class="player-artist" id="player-artist">-</p>
+                            <p class="player-album" id="player-album">-</p>
+                            <div class="play-status" id="play-status">
+                                <span class="status-indicator"></span>
+                                <span class="status-text" id="status-text">就绪</span>
+                            </div>
+                        </div>
+
+                        <div class="player-control-section">
+                            <div class="progress-section">
+                                <span class="time-current" id="current-time">0:00</span>
+                                <div class="progress-bar-wrapper" id="progress-bar" onclick="seek(event)">
+                                    <div class="progress-bar-bg"></div>
+                                    <div class="progress-bar-fill" id="progress-fill"></div>
+                                    <div class="progress-thumb" id="progress-thumb"></div>
+                                    <div class="progress-buffer" id="progress-buffer"></div>
+                                </div>
+                                <span class="time-duration" id="duration">0:00</span>
+                            </div>
+
+                            <div class="control-buttons">
+                                <button class="control-btn mode-btn" onclick="setRepeatMode()" title="循环模式">
+                                    <span id="repeat-icon">🔁</span>
+                                </button>
+                                <button class="control-btn" onclick="prevTrack()" title="上一首">⏮</button>
+                                <button class="control-btn play-btn" onclick="togglePlay()" title="播放/暂停" id="play-btn">
+                                    <span id="play-icon" class="play-icon">▶</span>
+                                </button>
+                                <button class="control-btn" onclick="nextTrack()" title="下一首">⏭</button>
+                                <button class="control-btn mode-btn" onclick="toggleShuffle()" title="随机播放">
+                                    <span id="shuffle-icon">🔀</span>
+                                </button>
+                            </div>
+
+                            <div class="volume-section">
+                                <button class="control-btn icon-btn" onclick="toggleMute()" title="静音">
+                                    <span id="volume-icon">🔊</span>
+                                </button>
+                                <input type="range" class="volume-slider" id="volume-slider" min="0" max="100" value="80" onchange="setVolume(this.value)">
+                            </div>
+
+                            <div class="play-error" id="play-error" style="display:none;">
+                                <span class="error-icon">⚠️</span>
+                                <span class="error-text" id="error-text">播放失败</span>
+                                <button class="btn btn-sm" onclick="retryPlay()">重试</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="lyrics-section">
+                        <div class="section-header">
+                            <h3>📝 歌词</h3>
+                        </div>
+                        <div class="lyrics-container" id="lyrics-container">
+                            <p class="no-lyrics">暂无歌词</p>
+                        </div>
+                    </div>
+
+                    <div class="playlist-section">
+                        <div class="section-header">
+                            <h3>📋 播放列表</h3>
+                            <span class="playlist-count" id="playlist-count">0 首</span>
+                        </div>
+                        <div class="playlist" id="playlist">
+                            <p class="empty-playlist">暂无播放列表</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="webdav-page" class="page">
+                <div class="card">
+                    <div class="card-header">
+                        <h3>☁️ WebDAV 服务器配置</h3>
+                    </div>
+                    <form id="webdav-form" class="form" onsubmit="saveWebDAVConfig(event)">
+                        <div class="form-group">
+                            <label class="form-label">服务器地址 <span class="required">*</span></label>
+                            <input type="url" class="form-input" id="webdav-url" required placeholder="http://192.168.1.100:8081">
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label class="form-label">用户名</label>
+                                <input type="text" class="form-input" id="webdav-username" placeholder="admin">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label">密码</label>
+                                <input type="password" class="form-input" id="webdav-password" placeholder="password">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">根路径</label>
+                            <input type="text" class="form-input" id="webdav-rootpath" placeholder="/music">
+                        </div>
+                        <div class="form-group">
+                            <label class="checkbox-label">
+                                <input type="checkbox" id="webdav-enabled" checked>
+                                <span>启用 WebDAV</span>
+                            </label>
+                        </div>
+                        <div class="form-actions">
+                            <button type="submit" class="btn btn-primary">💾 保存配置</button>
+                            <button type="button" class="btn" onclick="testWebDAV()">🔌 测试连接</button>
+                            <button type="button" class="btn btn-danger" onclick="deleteWebDAVConfig()">🗑️ 删除配置</button>
+                        </div>
+                    </form>
+                    <div id="webdav-status" class="status-message"></div>
+                </div>
+            </section>
+
+            <section id="scan-page" class="page">
+                <div class="card">
+                    <div class="card-header">
+                        <h3>🔍 扫描控制</h3>
+                    </div>
+                    <div class="scan-controls">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="scan-recursive" checked>
+                            <span>递归扫描子目录</span>
+                        </label>
+                        <button class="btn btn-primary" onclick="startScan()" id="scan-btn">🚀 开始扫描</button>
+                    </div>
+                    <div class="scan-progress">
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="scan-progress-fill"></div>
+                        </div>
+                        <p class="scan-status" id="scan-status">就绪</p>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <h3>📜 扫描日志</h3>
+                    </div>
+                    <div class="scan-logs" id="scan-logs">
+                        <p class="no-logs">暂无日志</p>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <audio id="audio-player" preload="metadata"></audio>
+
+    <div id="music-modal" class="modal">
+        <div class="modal-overlay" onclick="closeModal()"></div>
+        <div class="modal-content">
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+            <h3 class="modal-title" id="modal-title">音乐详情</h3>
+            <div id="view-mode">
+                <div class="detail-grid">
+                    <div class="detail-item"><label>文件路径</label><p id="detail-path">-</p></div>
+                    <div class="detail-item"><label>文件大小</label><p id="detail-size">-</p></div>
+                    <div class="detail-item"><label>标题</label><p id="detail-title">-</p></div>
+                    <div class="detail-item"><label>艺术家</label><p id="detail-artist">-</p></div>
+                    <div class="detail-item"><label>专辑</label><p id="detail-album">-</p></div>
+                    <div class="detail-item"><label>时长</label><p id="detail-duration">-</p></div>
+                    <div class="detail-item"><label>年份</label><p id="detail-year">-</p></div>
+                    <div class="detail-item"><label>流派</label><p id="detail-genre">-</p></div>
+                </div>
+                <div class="modal-actions">
+                    <button class="btn btn-primary" onclick="showEditMode()">✏️ 编辑</button>
+                    <button class="btn btn-success" onclick="fetchLyrics()">📝 获取歌词</button>
+                    <button class="btn btn-success" onclick="fetchCover()">🖼️ 获取封面</button>
+                    <button class="btn btn-success" onclick="playCurrentMusic()">▶️ 播放</button>
+                    <button class="btn btn-danger" onclick="deleteCurrentMusic()">🗑️ 删除</button>
+                </div>
+            </div>
+            <div id="edit-mode" style="display:none;">
+                <form id="edit-form" class="form" onsubmit="saveMusicEdit(event)">
+                    <input type="hidden" id="edit-id">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">标题</label>
+                            <input type="text" class="form-input" id="edit-title">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">艺术家</label>
+                            <input type="text" class="form-input" id="edit-artist">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">专辑</label>
+                            <input type="text" class="form-input" id="edit-album">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">流派</label>
+                            <input type="text" class="form-input" id="edit-genre">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">年份</label>
+                            <input type="number" class="form-input" id="edit-year">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">音轨号</label>
+                            <input type="number" class="form-input" id="edit-track">
+                        </div>
+                    </div>
+                    <div class="modal-actions">
+                        <button type="submit" class="btn btn-primary">💾 保存</button>
+                        <button type="button" class="btn" onclick="showViewMode()">取消</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div id="batch-modal" class="modal">
+        <div class="modal-overlay" onclick="closeBatchModal()"></div>
+        <div class="modal-content modal-sm">
+            <button class="modal-close" onclick="closeBatchModal()">&times;</button>
+            <h3 class="modal-title">批量修改</h3>
+            <p class="modal-desc">已选择 <strong id="batch-count-modal">0</strong> 首音乐</p>
+            <form id="batch-form" class="form" onsubmit="saveBatchEdit(event)">
+                <div class="form-group">
+                    <label class="form-label">艺术家</label>
+                    <input type="text" class="form-input" id="batch-artist" placeholder="留空不修改">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">专辑</label>
+                    <input type="text" class="form-input" id="batch-album" placeholder="留空不修改">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">流派</label>
+                    <input type="text" class="form-input" id="batch-genre" placeholder="留空不修改">
+                </div>
+                <div class="modal-actions">
+                    <button type="submit" class="btn btn-primary">💾 保存</button>
+                    <button type="button" class="btn" onclick="closeBatchModal()">取消</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="toast" class="toast"></div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
