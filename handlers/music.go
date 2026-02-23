@@ -683,7 +683,7 @@ func (h *MusicHandler) BatchFetchAll(c *gin.Context) {
 
 			// 获取歌词
 			if !music.HasLyrics {
-				lyricsPath, _, err := f.FetchAndSave(music.Artist, music.Title, music.Album)
+				lyricsPath, _, _ := f.FetchAndSave(music.Artist, music.Title, music.Album)
 				if lyricsPath != "" {
 					music.HasLyrics = true
 					lyricsSuccess++
@@ -697,7 +697,7 @@ func (h *MusicHandler) BatchFetchAll(c *gin.Context) {
 
 			// 获取封面
 			if !music.HasCover {
-				_, coverPath, err := f.FetchAndSave(music.Artist, music.Title, music.Album)
+				_, coverPath, _ := f.FetchAndSave(music.Artist, music.Title, music.Album)
 				if coverPath != "" {
 					music.HasCover = true
 					music.CoverMIME = "image/jpeg"
