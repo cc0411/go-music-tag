@@ -140,6 +140,52 @@
                         <input type="text" id="music-search" placeholder="搜索音乐、艺术家、专辑...">
                         <button class="btn btn-primary" onclick="searchMusic()">🔍 搜索</button>
                     </div>
+                    
+                    <!-- ✅ 新增批量操作按钮 -->
+                    <div class="batch-actions">
+                        <button class="btn btn-success" onclick="batchFetchLyrics()">📝 批量获取歌词</button>
+                        <button class="btn btn-success" onclick="batchFetchCovers()">🖼️ 批量获取封面</button>
+                        <button class="btn btn-primary" onclick="batchFetchAll()">🎯 批量获取全部</button>
+                    </div>
+                </div>
+                
+                <!-- ✅ 新增批量操作进度模态框 -->
+                <div id="batch-modal" class="modal">
+                    <div class="modal-overlay" onclick="closeBatchModal()"></div>
+                    <div class="modal-content">
+                        <button class="modal-close" onclick="closeBatchModal()">&times;</button>
+                        <h3 class="modal-title" id="batch-title">批量获取中...</h3>
+                        
+                        <div class="progress-container">
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="progress-fill"></div>
+                            </div>
+                            <p class="progress-text" id="progress-text">准备中...</p>
+                        </div>
+                        
+                        <div class="batch-stats">
+                            <div class="stat-item">
+                                <span class="stat-label">总数</span>
+                                <span class="stat-value" id="stat-total">0</span>
+                            </div>
+                            <div class="stat-item success">
+                                <span class="stat-label">成功</span>
+                                <span class="stat-value" id="stat-success">0</span>
+                            </div>
+                            <div class="stat-item error">
+                                <span class="stat-label">失败</span>
+                                <span class="stat-value" id="stat-failed">0</span>
+                            </div>
+                        </div>
+                        
+                        <div class="batch-log" id="batch-log">
+                            <!-- 日志内容动态生成 -->
+                        </div>
+                        
+                        <div class="modal-actions">
+                            <button class="btn btn-primary" onclick="closeBatchModal()">关闭</button>
+                        </div>
+                    </div>
                 </div>
                 <div class="card">
                     <div class="table-container">

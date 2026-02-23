@@ -82,11 +82,32 @@ type BatchUpdateRequest struct {
 	Year   int    `json:"year"`
 }
 
+// BatchStatus 批量操作状态
+type BatchStatus struct {
+	Running  bool   `json:"running"`
+	TaskType string `json:"task_type"` // lyrics, covers, all
+	Total    int    `json:"total"`
+	Current  int    `json:"current"`
+	Success  int    `json:"success"`
+	Failed   int    `json:"failed"`
+	Message  string `json:"message"`
+}
+
 var (
 	scanTaskID = ""
 	scanMutex  sync.Mutex
 )
 
+// ✅ 自定义状态码
+const StatusBusy = 409
+
+// ✅ 关键修复：添加 getDB 方法
+func (h *MusicHandler) getDB() *gorm.DB {
+	if h.db == nil {
+		h.db = database.GetDB()
+	}
+	return h.db
+}
 func NewMusicHandler() (*MusicHandler, error) {
 	return &MusicHandler{
 		db:       database.GetDB(),
@@ -418,6 +439,277 @@ func (h *MusicHandler) FetchCover(c *gin.Context) {
 		"data": gin.H{
 			"cover_path": coverPath,
 			"has_cover":  true,
+		},
+	})
+}
+
+// 全局批量操作状态 (简单实现，生产环境建议用 Redis)
+var batchStatus = &BatchStatus{
+	Running: false,
+}
+
+// GetBatchStatus 获取批量操作状态
+func (h *MusicHandler) GetBatchStatus(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{
+		"code": 0,
+		"data": batchStatus,
+	})
+}
+
+// BatchFetchLyrics 批量获取所有音乐歌词
+func (h *MusicHandler) BatchFetchLyrics(c *gin.Context) {
+	var musicList []models.Music
+	// 只获取没有歌词的音乐
+	if err := h.getDB().Where("has_lyrics = ? OR has_lyrics IS NULL", false).Find(&musicList).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "Failed to get music list: " + err.Error(),
+		})
+		return
+	}
+
+	if len(musicList) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"code":    0,
+			"message": "No music needs lyrics",
+			"data": gin.H{
+				"total":   0,
+				"success": 0,
+				"failed":  0,
+			},
+		})
+		return
+	}
+
+	// 检查是否已有任务在运行
+	if batchStatus.Running {
+		c.JSON(409, gin.H{
+			"code":    409,
+			"message": "Another batch task is running",
+		})
+
+	}
+
+	// 初始化状态
+	batchStatus = &BatchStatus{
+		Running:  true,
+		TaskType: "lyrics",
+		Total:    len(musicList),
+		Current:  0,
+		Success:  0,
+		Failed:   0,
+		Message:  "Starting...",
+	}
+
+	// 在后台协程中处理
+	go func() {
+		f := fetcher.NewFetcher("/app/data/lyrics", "/app/data/covers")
+
+		for i, music := range musicList {
+			batchStatus.Current = i + 1
+			batchStatus.Message = fmt.Sprintf("Processing: %s", music.Title)
+
+			lyricsPath, _, err := f.FetchAndSave(music.Artist, music.Title, music.Album)
+			if err == nil && lyricsPath != "" {
+				music.HasLyrics = true
+				h.getDB().Save(&music)
+				batchStatus.Success++
+			} else {
+				batchStatus.Failed++
+			}
+			// 避免请求过快
+			time.Sleep(800 * time.Millisecond)
+		}
+
+		batchStatus.Running = false
+		batchStatus.Message = "Completed"
+		log.Printf("Batch fetch lyrics completed: success=%d, failed=%d", batchStatus.Success, batchStatus.Failed)
+	}()
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    0,
+		"message": "Batch fetch started",
+		"data": gin.H{
+			"total":   len(musicList),
+			"success": 0,
+			"failed":  0,
+		},
+	})
+}
+
+// BatchFetchCovers 批量获取所有音乐封面
+func (h *MusicHandler) BatchFetchCovers(c *gin.Context) {
+	var musicList []models.Music
+	// 只获取没有封面的音乐
+	if err := h.getDB().Where("has_cover = ? OR has_cover IS NULL", false).Find(&musicList).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "Failed to get music list: " + err.Error(),
+		})
+		return
+	}
+
+	if len(musicList) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"code":    0,
+			"message": "No music needs covers",
+			"data": gin.H{
+				"total":   0,
+				"success": 0,
+				"failed":  0,
+			},
+		})
+		return
+	}
+
+	// 检查是否已有任务在运行
+	if batchStatus.Running {
+		c.JSON(409, gin.H{
+			"code":    409,
+			"message": "Another batch task is running",
+		})
+
+		return
+	}
+
+	// 初始化状态
+	batchStatus = &BatchStatus{
+		Running:  true,
+		TaskType: "covers",
+		Total:    len(musicList),
+		Current:  0,
+		Success:  0,
+		Failed:   0,
+		Message:  "Starting...",
+	}
+
+	// 在后台协程中处理
+	go func() {
+		f := fetcher.NewFetcher("/app/data/lyrics", "/app/data/covers")
+
+		for i, music := range musicList {
+			batchStatus.Current = i + 1
+			batchStatus.Message = fmt.Sprintf("Processing: %s", music.Title)
+
+			_, coverPath, err := f.FetchAndSave(music.Artist, music.Title, music.Album)
+			if err == nil && coverPath != "" {
+				music.HasCover = true
+				music.CoverMIME = "image/jpeg"
+				h.getDB().Save(&music)
+				batchStatus.Success++
+			} else {
+				batchStatus.Failed++
+			}
+			// 避免请求过快
+			time.Sleep(800 * time.Millisecond)
+		}
+
+		batchStatus.Running = false
+		batchStatus.Message = "Completed"
+		log.Printf("Batch fetch covers completed: success=%d, failed=%d", batchStatus.Success, batchStatus.Failed)
+	}()
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    0,
+		"message": "Batch fetch started",
+		"data": gin.H{
+			"total":   len(musicList),
+			"success": 0,
+			"failed":  0,
+		},
+	})
+}
+
+// BatchFetchAll 批量获取歌词和封面
+func (h *MusicHandler) BatchFetchAll(c *gin.Context) {
+	var musicList []models.Music
+	if err := h.getDB().Where("scan_status = ?", "success").Find(&musicList).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "Failed to get music list: " + err.Error(),
+		})
+		return
+	}
+
+	if len(musicList) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"code":    0,
+			"message": "No music found",
+			"data": gin.H{
+				"total":   0,
+				"success": 0,
+				"failed":  0,
+			},
+		})
+		return
+	}
+
+	// 检查是否已有任务在运行
+	if batchStatus.Running {
+		c.JSON(409, gin.H{
+			"code":    409,
+			"message": "Another batch task is running",
+		})
+
+		return
+	}
+
+	// 初始化状态
+	batchStatus = &BatchStatus{
+		Running:  true,
+		TaskType: "all",
+		Total:    len(musicList),
+		Current:  0,
+		Success:  0,
+		Failed:   0,
+		Message:  "Starting...",
+	}
+
+	// 在后台协程中处理
+	go func() {
+		f := fetcher.NewFetcher("/app/data/lyrics", "/app/data/covers")
+
+		for i, music := range musicList {
+			batchStatus.Current = i + 1
+			batchStatus.Message = fmt.Sprintf("Processing: %s", music.Title)
+
+			// 获取歌词
+			if !music.HasLyrics {
+				lyricsPath, _, err := f.FetchAndSave(music.Artist, music.Title, music.Album)
+				if err == nil && lyricsPath != "" {
+					music.HasLyrics = true
+				}
+			}
+
+			// 获取封面
+			if !music.HasCover {
+				_, coverPath, err := f.FetchAndSave(music.Artist, music.Title, music.Album)
+				if err == nil && coverPath != "" {
+					music.HasCover = true
+					music.CoverMIME = "image/jpeg"
+				}
+			}
+
+			// 更新数据库
+			h.getDB().Save(&music)
+			batchStatus.Success++
+
+			// 避免请求过快
+			time.Sleep(800 * time.Millisecond)
+		}
+
+		batchStatus.Running = false
+		batchStatus.Message = "Completed"
+		log.Printf("Batch fetch all completed: success=%d, failed=%d", batchStatus.Success, batchStatus.Failed)
+	}()
+
+	c.JSON(http.StatusOK, gin.H{
+		"code":    0,
+		"message": "Batch fetch started",
+		"data": gin.H{
+			"total":   len(musicList),
+			"success": 0,
+			"failed":  0,
 		},
 	})
 }

@@ -100,9 +100,13 @@ func SetupRouter() *gin.Engine {
 		// 歌词和封面获取（确保这些只出现一次！）
 		v1.POST("/music/:id/fetch-lyrics", musicHandler.FetchLyrics)
 		v1.POST("/music/:id/fetch-cover", musicHandler.FetchCover)
+		v1.POST("/music/batch-fetch-lyrics", musicHandler.BatchFetchLyrics)
+		v1.POST("/music/batch-fetch-covers", musicHandler.BatchFetchCovers)
+		v1.POST("/music/batch-fetch-all", musicHandler.BatchFetchAll)
 
 		// 统计信息
 		v1.GET("/statistics", musicHandler.Statistics)
+		v1.GET("/music/batch-status", musicHandler.GetBatchStatus)
 	}
 
 	// 404 处理

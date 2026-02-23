@@ -821,243 +821,154 @@ function toggleShuffle() {
     btn.classList.toggle('active', isShuffle);
     showToast(isShuffle ? '随机播放已开启' : '随机播放已关闭');
 }
-// 批量获取选中的歌词
+// 批量获取歌词
 async function batchFetchLyrics() {
-    if (selectedMusicIds.length === 0) {
-        showToast('请先选择音乐', 'warning');
-        return;
-    }
+    if (!confirm('确定要批量获取所有音乐的歌词吗？这可能需要较长时间。')) return;
     
-    showBatchProgressModal('批量获取歌词', selectedMusicIds.length);
+    openBatchModal('批量获取歌词');
     
-    let success = 0;
-    let failed = 0;
-    const details = document.getElementById('progress-details');
-    details.innerHTML = '';
-    
-    for (let i = 0; i < selectedMusicIds.length; i++) {
-        const id = selectedMusicIds[i];
-        updateProgress(i + 1, selectedMusicIds.length, `正在获取第 ${i + 1}/${selectedMusicIds.length} 首歌词...`);
+    try {
+        const res = await fetch(`${API_BASE}/music/batch-fetch-lyrics`, {
+            method: 'POST'
+        });
+        const result = await res.json();
         
-        try {
-            const res = await fetch(`${API_BASE}/music/${id}/fetch-lyrics`, {
-                method: 'POST'
-            });
-            const result = await res.json();
+        if (result.code === 0) {
+            const total = result.data.total;
+            updateBatchProgress(0, total, `共 ${total} 首音乐，开始获取...`);
+            updateBatchStats(total, 0, 0);
             
-            if (result.code === 0) {
-                success++;
-                addProgressDetail(`✅ 获取成功`, 'success');
-            } else {
-                failed++;
-                addProgressDetail(`❌ 获取失败：${result.message}`, 'error');
-            }
-        } catch (e) {
-            failed++;
-            addProgressDetail(`❌ 网络错误`, 'error');
+            // 轮询真实进度
+            pollBatchStatus();
+        } else {
+            alert('启动失败：' + result.message);
+            closeBatchModal();
         }
-        
-        // 避免请求过快
-        await new Promise(resolve => setTimeout(resolve, 500));
+    } catch (e) {
+        alert('网络错误：' + e.message);
+        closeBatchModal();
     }
-    
-    updateProgress(selectedMusicIds.length, selectedMusicIds.length, '完成！');
-    showToast(`批量获取完成：成功${success}，失败${failed}`, success > 0 ? 'success' : 'error');
-    
-    // 刷新列表
-    setTimeout(() => loadMusicList(currentPage), 1000);
 }
 
-// 批量获取选中的封面
+// 批量获取封面
 async function batchFetchCovers() {
-    if (selectedMusicIds.length === 0) {
-        showToast('请先选择音乐', 'warning');
-        return;
-    }
+    if (!confirm('确定要批量获取所有音乐的封面吗？这可能需要较长时间。')) return;
     
-    showBatchProgressModal('批量获取封面', selectedMusicIds.length);
+    openBatchModal('批量获取封面');
     
-    let success = 0;
-    let failed = 0;
-    const details = document.getElementById('progress-details');
-    details.innerHTML = '';
-    
-    for (let i = 0; i < selectedMusicIds.length; i++) {
-        const id = selectedMusicIds[i];
-        updateProgress(i + 1, selectedMusicIds.length, `正在获取第 ${i + 1}/${selectedMusicIds.length} 首封面...`);
+    try {
+        const res = await fetch(`${API_BASE}/music/batch-fetch-covers`, {
+            method: 'POST'
+        });
+        const result = await res.json();
         
+        if (result.code === 0) {
+            const total = result.data.total;
+            updateBatchProgress(0, total, `共 ${total} 首音乐，开始获取...`);
+            updateBatchStats(total, 0, 0);
+            pollBatchStatus();
+        } else {
+            alert('启动失败：' + result.message);
+            closeBatchModal();
+        }
+    } catch (e) {
+        alert('网络错误：' + e.message);
+        closeBatchModal();
+    }
+}
+
+// 批量获取全部
+async function batchFetchAll() {
+    if (!confirm('确定要批量获取所有音乐的歌词和封面吗？这可能需要较长时间。')) return;
+    
+    openBatchModal('批量获取歌词和封面');
+    
+    try {
+        const res = await fetch(`${API_BASE}/music/batch-fetch-all`, {
+            method: 'POST'
+        });
+        const result = await res.json();
+        
+        if (result.code === 0) {
+            const total = result.data.total;
+            updateBatchProgress(0, total, `共 ${total} 首音乐，开始获取...`);
+            updateBatchStats(total, 0, 0);
+            pollBatchStatus();
+        } else {
+            alert('启动失败：' + result.message);
+            closeBatchModal();
+        }
+    } catch (e) {
+        alert('网络错误：' + e.message);
+        closeBatchModal();
+    }
+}
+
+// 轮询批量操作状态
+let pollInterval = null;
+function pollBatchStatus() {
+    pollInterval = setInterval(async () => {
         try {
-            const res = await fetch(`${API_BASE}/music/${id}/fetch-cover`, {
-                method: 'POST'
-            });
+            const res = await fetch(`${API_BASE}/music/batch-status`);
             const result = await res.json();
             
-            if (result.code === 0) {
-                success++;
-                addProgressDetail(`✅ 获取成功`, 'success');
-            } else {
-                failed++;
-                addProgressDetail(`❌ 获取失败：${result.message}`, 'error');
+            if (result.code === 0 && result.data) {
+                const status = result.data;
+                
+                updateBatchProgress(status.current, status.total, status.message);
+                updateBatchStats(status.total, status.success, status.failed);
+                addBatchLog(status.message, 'info');
+                
+                // 任务完成
+                if (!status.running) {
+                    clearInterval(pollInterval);
+                    addBatchLog('✅ 批量获取完成！', 'success');
+                    setTimeout(() => {
+                        loadMusicList(1); // 刷新列表
+                    }, 2000);
+                }
             }
         } catch (e) {
-            failed++;
-            addProgressDetail(`❌ 网络错误`, 'error');
+            console.error('轮询状态失败:', e);
         }
-        
-        // 避免请求过快
-        await new Promise(resolve => setTimeout(resolve, 500));
-    }
-    
-    updateProgress(selectedMusicIds.length, selectedMusicIds.length, '完成！');
-    showToast(`批量获取完成：成功${success}，失败${failed}`, success > 0 ? 'success' : 'error');
-    
-    // 刷新列表
-    setTimeout(() => loadMusicList(currentPage), 1000);
+    }, 2000); // 每 2 秒轮询一次
 }
 
-// 批量获取所有音乐的歌词
-async function batchFetchAllLyrics() {
-    if (!confirm('确定要获取所有音乐的歌词吗？')) return;
-    
-    showBatchProgressModal('批量获取所有歌词', 100);
-    document.getElementById('progress-status').textContent = '正在获取音乐列表...';
-    
-    let allMusic = [];
-    let page = 1;
-    const pageSize = 50; // 每次获取 50 首，避免请求过大
-    
-    try {
-        // 循环获取所有分页数据
-        while (true) {
-            const res = await fetch(`${API_BASE}/music/search?page=${page}&page_size=${pageSize}`);
-            const data = await res.json();
-            
-            if (data.code !== 0 || !data.data || data.data.length === 0) {
-                break; // 没有更多数据了
-            }
-            
-            allMusic = allMusic.concat(data.data);
-            
-            // 如果返回的数据少于 pageSize，说明是最后一页
-            if (data.data.length < pageSize) {
-                break;
-            }
-            page++;
-            
-            // 防止死循环，最多获取 20 页 (1000 首)
-            if (page > 20) break;
-        }
-        
-        if (allMusic.length === 0) {
-            showToast('没有音乐', 'warning');
-            closeBatchProgressModal();
-            return;
-        }
-        
-        // 继续执行后续的批量获取逻辑...
-        // ... (保持原有代码不变)
-        
-    } catch (e) {
-        console.error(e);
-        showToast('获取音乐列表失败：' + e.message, 'error');
-        closeBatchProgressModal();
-    }
+// 模态框控制
+function openBatchModal(title) {
+    document.getElementById('batch-title').textContent = title;
+    document.getElementById('batch-modal').classList.add('active');
+    document.getElementById('batch-log').innerHTML = '';
+    addBatchLog('🚀 任务已启动...', 'info');
 }
-// 批量获取所有音乐的封面
-async function batchFetchAllCovers() {
-    if (!confirm('确定要获取所有音乐的封面吗？这可能需要较长时间。')) return;
-    
-    showBatchProgressModal('批量获取所有封面', 100);
-    document.getElementById('progress-status').textContent = '正在获取音乐列表...';
-    
-    try {
-        const res = await fetch(`${API_BASE}/music?page=1&page_size=1000`);
-        const data = await res.json();
-        
-        if (data.code !== 0) {
-            throw new Error('获取音乐列表失败');
-        }
-        
-        const allMusic = data.data || data.list || [];
-        const allIds = allMusic.map(m => m.id);
-        
-        if (allIds.length === 0) {
-            showToast('没有音乐', 'warning');
-            closeBatchProgressModal();
-            return;
-        }
-        
-        updateProgress(0, allIds.length, `共 ${allIds.length} 首音乐，开始获取...`);
-        
-        let success = 0;
-        let failed = 0;
-        const details = document.getElementById('progress-details');
-        details.innerHTML = '';
-        
-        for (let i = 0; i < allIds.length; i++) {
-            const id = allIds[i];
-            updateProgress(i + 1, allIds.length, `正在获取第 ${i + 1}/${allIds.length} 首封面...`);
-            
-            try {
-                const res = await fetch(`${API_BASE}/music/${id}/fetch-cover`, {
-                    method: 'POST'
-                });
-                const result = await res.json();
-                
-                if (result.code === 0) {
-                    success++;
-                    addProgressDetail(`✅ ${allMusic[i].title || '未知'} - 获取成功`, 'success');
-                } else {
-                    failed++;
-                    addProgressDetail(`❌ ${allMusic[i].title || '未知'} - ${result.message}`, 'error');
-                }
-            } catch (e) {
-                failed++;
-                addProgressDetail(`❌ ${allMusic[i].title || '未知'} - 网络错误`, 'error');
-            }
-            
-            await new Promise(resolve => setTimeout(resolve, 500));
-        }
-        
-        updateProgress(allIds.length, allIds.length, '完成！');
-        showToast(`批量获取完成：成功${success}，失败${failed}`, success > 0 ? 'success' : 'error');
-        loadMusicList(currentPage);
-        
-    } catch (e) {
-        console.error(e);
-        showToast('批量获取失败：' + e.message, 'error');
-        closeBatchProgressModal();
+
+function closeBatchModal() {
+    document.getElementById('batch-modal').classList.remove('active');
+    if (pollInterval) {
+        clearInterval(pollInterval);
+        pollInterval = null;
     }
 }
 
-// 显示进度模态框
-function showBatchProgressModal(title, total) {
-    document.getElementById('progress-title').textContent = title;
-    document.getElementById('progress-fill').style.width = '0%';
-    document.getElementById('progress-status').textContent = '准备中...';
-    document.getElementById('batch-progress-modal').classList.add('active');
-}
-
-// 关闭进度模态框
-function closeBatchProgressModal() {
-    document.getElementById('batch-progress-modal').classList.remove('active');
-}
-
-// 更新进度条
-function updateProgress(current, total, status) {
-    const percent = Math.round((current / total) * 100);
+function updateBatchProgress(current, total, text) {
+    const percent = total > 0 ? Math.round((current / total) * 100) : 0;
     document.getElementById('progress-fill').style.width = percent + '%';
-    document.getElementById('progress-status').textContent = status;
+    document.getElementById('progress-text').textContent = text;
 }
 
-// 添加进度详情
-function addProgressDetail(message, type) {
-    const details = document.getElementById('progress-details');
+function updateBatchStats(total, success, failed) {
+    document.getElementById('stat-total').textContent = total;
+    document.getElementById('stat-success').textContent = success;
+    document.getElementById('stat-failed').textContent = failed;
+}
+
+function addBatchLog(message, type) {
+    const logEl = document.getElementById('batch-log');
     const p = document.createElement('p');
     p.className = type;
-    p.textContent = message;
-    details.appendChild(p);
-    details.scrollTop = details.scrollHeight;
+    p.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+    logEl.appendChild(p);
+    logEl.scrollTop = logEl.scrollHeight;
 }
 
 // 渲染音乐列表时添加状态列
