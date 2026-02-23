@@ -296,55 +296,69 @@ func (f *Fetcher) GetLocalCoverPath(artist, album string) string {
 }
 
 // FetchAndSave 获取并保存歌词和封面
-// ✅ 修复：严格检查每一步的错误，任何一步失败都返回错误
+// ✅ 修复：严格分离歌词和封面逻辑，各自独立返回结果
 func (f *Fetcher) FetchAndSave(artist, title, album string) (lyricsPath, coverPath string, err error) {
-	// 获取歌词
+	// --- 1. 获取歌词 ---
 	if artist != "" && title != "" {
-		lyric, err := f.SearchLyrics(artist, title)
-		if err == nil && lyric.Content != "" {
+		lyric, lyricErr := f.SearchLyrics(artist, title)
+		if lyricErr == nil && lyric.Content != "" {
 			path, saveErr := f.SaveLyrics(artist, title, lyric.Content)
 			if saveErr != nil {
-				log.Printf("[Fetcher] Lyrics fetched but save failed: %v", saveErr)
-				// 歌词保存失败不阻断封面获取，但 lyricsPath 为空
+				log.Printf("[Fetcher] ⚠️ Lyrics fetched but save failed: %v", saveErr)
 			} else {
 				lyricsPath = path
+				log.Printf("[Fetcher] ✅ Lyrics saved: %s", lyricsPath)
 			}
+		} else {
+			log.Printf("[Fetcher] ℹ️ Lyrics not found for: %s - %s", artist, title)
 		}
 	}
 
-	// 获取封面
+	// --- 2. 获取封面 (独立逻辑) ---
 	searchArtist := artist
 	if searchArtist == "" {
 		searchArtist = "Various Artists"
 	}
+
+	// 优先用专辑名，没有则用歌名
 	searchAlbum := album
 	if searchAlbum == "" && title != "" {
-		searchAlbum = title // 尝试用歌名当专辑名搜
+		searchAlbum = title
 	}
 
 	if searchArtist != "" || searchAlbum != "" {
-		cover, err := f.SearchCover(searchArtist, searchAlbum)
-		if err == nil && cover.Data != nil && len(cover.Data) > 0 {
+		cover, coverErr := f.SearchCover(searchArtist, searchAlbum)
+
+		// ✅ 关键修复：严格检查 cover.Data 是否存在且不为空
+		if coverErr == nil && cover != nil && cover.Data != nil && len(cover.Data) > 0 {
 			path, saveErr := f.SaveCover(searchArtist, searchAlbum, cover.Data)
 			if saveErr != nil {
-				log.Printf("[Fetcher] Cover fetched but save failed: %v", saveErr)
-				// ✅ 关键修复：如果保存失败，返回错误，让上层知道没成功
+				log.Printf("[Fetcher] ❌ Cover fetched but save failed: %v", saveErr)
+				// 封面保存失败，返回错误，让上层知道
 				return lyricsPath, "", fmt.Errorf("cover save failed: %w", saveErr)
 			}
 			coverPath = path
+			log.Printf("[Fetcher] ✅ Cover saved: %s", coverPath)
 		} else {
-			if err != nil {
-				log.Printf("[Fetcher] Cover search failed: %v", err)
-			} else {
-				log.Printf("[Fetcher] Cover data is empty")
+			// 记录为什么没找到封面
+			if coverErr != nil {
+				log.Printf("[Fetcher] ❌ Cover search failed: %v (Artist: %s, Album: %s)", coverErr, searchArtist, searchAlbum)
+			} else if cover == nil {
+				log.Printf("[Fetcher] ❌ Cover result is nil")
+			} else if len(cover.Data) == 0 {
+				log.Printf("[Fetcher] ❌ Cover data is empty (URL: %s)", cover.URL)
 			}
 		}
+	} else {
+		log.Printf("[Fetcher] ℹ️ Skip cover search: no artist or album info")
 	}
 
-	// 如果两者都失败，返回一个通用错误
+	// --- 3. 返回结果 ---
+	// 如果两者都失败，才返回错误
 	if lyricsPath == "" && coverPath == "" {
 		return "", "", fmt.Errorf("failed to fetch both lyrics and cover")
 	}
 
+	// 如果至少有一个成功，返回 nil 错误（但上层需要分别检查路径是否为空）
 	return lyricsPath, coverPath, nil
 }

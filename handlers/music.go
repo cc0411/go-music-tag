@@ -553,26 +553,16 @@ func (h *MusicHandler) BatchFetchCovers(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"code":    0,
 			"message": "No music needs covers",
-			"data": gin.H{
-				"total":   0,
-				"success": 0,
-				"failed":  0,
-			},
+			"data":    gin.H{"total": 0, "success": 0, "failed": 0},
 		})
 		return
 	}
 
-	// 检查是否已有任务在运行
 	if batchStatus.Running {
-		c.JSON(409, gin.H{
-			"code":    409,
-			"message": "Another batch task is running",
-		})
-
+		c.JSON(409, gin.H{"code": 409, "message": "Another batch task is running"})
 		return
 	}
 
-	// 初始化状态
 	batchStatus = &BatchStatus{
 		Running:  true,
 		TaskType: "covers",
@@ -583,40 +573,45 @@ func (h *MusicHandler) BatchFetchCovers(c *gin.Context) {
 		Message:  "Starting...",
 	}
 
-	// 在后台协程中处理
 	go func() {
 		f := fetcher.NewFetcher("/app/data/lyrics", "/app/data/covers")
+		success := 0
+		failed := 0
 
 		for i, music := range musicList {
 			batchStatus.Current = i + 1
 			batchStatus.Message = fmt.Sprintf("Processing: %s", music.Title)
 
+			// ✅ 关键：只获取封面，忽略歌词
+			// 我们可以创建一个专门的 FetchCoverOnly 方法，或者这样处理：
 			_, coverPath, err := f.FetchAndSave(music.Artist, music.Title, music.Album)
-			if err == nil && coverPath != "" {
+
+			// 即使 err 不为 nil，只要 coverPath 有值，也算成功
+			if coverPath != "" {
 				music.HasCover = true
 				music.CoverMIME = "image/jpeg"
 				h.getDB().Save(&music)
-				batchStatus.Success++
+				success++
+				log.Printf("[Batch] ✅ %s: Cover fetched", music.Title)
 			} else {
-				batchStatus.Failed++
+				failed++
+				log.Printf("[Batch] ❌ %s: Cover failed (%v)", music.Title, err)
 			}
-			// 避免请求过快
+
 			time.Sleep(800 * time.Millisecond)
 		}
 
 		batchStatus.Running = false
 		batchStatus.Message = "Completed"
-		log.Printf("Batch fetch covers completed: success=%d, failed=%d", batchStatus.Success, batchStatus.Failed)
+		batchStatus.Success = success
+		batchStatus.Failed = failed
+		log.Printf("[Batch] 🎉 Cover batch done: success=%d, failed=%d", success, failed)
 	}()
 
 	c.JSON(http.StatusOK, gin.H{
 		"code":    0,
 		"message": "Batch fetch started",
-		"data": gin.H{
-			"total":   len(musicList),
-			"success": 0,
-			"failed":  0,
-		},
+		"data":    gin.H{"total": len(musicList), "success": 0, "failed": 0},
 	})
 }
 
@@ -635,11 +630,7 @@ func (h *MusicHandler) BatchFetchAll(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"code":    0,
 			"message": "No music found",
-			"data": gin.H{
-				"total":   0,
-				"success": 0,
-				"failed":  0,
-			},
+			"data":    gin.H{"total": 0, "lyrics_success": 0, "cover_success": 0},
 		})
 		return
 	}
@@ -650,7 +641,6 @@ func (h *MusicHandler) BatchFetchAll(c *gin.Context) {
 			"code":    409,
 			"message": "Another batch task is running",
 		})
-
 		return
 	}
 
@@ -665,42 +655,66 @@ func (h *MusicHandler) BatchFetchAll(c *gin.Context) {
 		Message:  "Starting...",
 	}
 
-	// 在后台协程中处理
 	go func() {
 		f := fetcher.NewFetcher("/app/data/lyrics", "/app/data/covers")
+		lyricsSuccess := 0
+		lyricsFailed := 0
+		coverSuccess := 0
+		coverFailed := 0
 
 		for i, music := range musicList {
 			batchStatus.Current = i + 1
 			batchStatus.Message = fmt.Sprintf("Processing: %s", music.Title)
 
-			// 获取歌词
+			updated := false
+
+			// --- 获取歌词 ---
 			if !music.HasLyrics {
 				lyricsPath, _, err := f.FetchAndSave(music.Artist, music.Title, music.Album)
 				if err == nil && lyricsPath != "" {
 					music.HasLyrics = true
+					lyricsSuccess++
+					updated = true
+					log.Printf("[Batch] ✅ %s: Lyrics fetched", music.Title)
+				} else {
+					lyricsFailed++
+					log.Printf("[Batch] ❌ %s: Lyrics failed (%v)", music.Title, err)
 				}
 			}
 
-			// 获取封面
+			// --- 获取封面 (独立调用，不受歌词影响) ---
 			if !music.HasCover {
+				// 再次调用 FetchAndSave，但这次只关心封面
+				// 或者更好的方式是拆分函数，这里为了简单复用
 				_, coverPath, err := f.FetchAndSave(music.Artist, music.Title, music.Album)
 				if err == nil && coverPath != "" {
 					music.HasCover = true
 					music.CoverMIME = "image/jpeg"
+					coverSuccess++
+					updated = true
+					log.Printf("[Batch] ✅ %s: Cover fetched", music.Title)
+				} else {
+					coverFailed++
+					log.Printf("[Batch] ❌ %s: Cover failed (%v)", music.Title, err)
 				}
 			}
 
-			// 更新数据库
-			h.getDB().Save(&music)
-			batchStatus.Success++
+			// 只有当有更新时才保存数据库
+			if updated {
+				h.getDB().Save(&music)
+			}
 
-			// 避免请求过快
+			batchStatus.Success = lyricsSuccess + coverSuccess
+			batchStatus.Failed = lyricsFailed + coverFailed
+
 			time.Sleep(800 * time.Millisecond)
 		}
 
 		batchStatus.Running = false
 		batchStatus.Message = "Completed"
-		log.Printf("Batch fetch all completed: success=%d, failed=%d", batchStatus.Success, batchStatus.Failed)
+		log.Printf("[Batch] 🎉 All done: Lyrics=%d/%d, Covers=%d/%d",
+			lyricsSuccess, lyricsSuccess+lyricsFailed,
+			coverSuccess, coverSuccess+coverFailed)
 	}()
 
 	c.JSON(http.StatusOK, gin.H{
