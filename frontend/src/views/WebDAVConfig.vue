@@ -135,32 +135,37 @@ const testConn = async () => {
 
   testing.value = true
   try {
-    // ✅ 关键修改策略：
-    // 由于后端 Test 接口可能依赖数据库中的配置 (返回 404 如果不存在)，
-    // 我们在测试前先调用一次保存，确保数据库里有记录。
-    
-    // 1. 先保存 (静默保存，不弹窗打扰用户)
+    // 1. 先静默保存一次 (确保数据库有记录，防止旧逻辑报错)
     try {
       await api.saveWebDAVConfig(payload)
-    } catch (saveErr) {
-      console.warn('预保存失败，尝试直接测试...', saveErr)
-      // 即使保存失败，也继续尝试测试，万一后端支持直接传参呢
+    } catch (e) {
+      // 保存失败也不影响测试
     }
 
-    // 2. 再测试
-    await api.testWebDAVConfig(payload)
-    ElMessage.success('连接成功！服务器可用')
+    // 2. 发起测试请求
+    const res = await api.testWebDAVConfig(payload)
+    
+    // ✅ 成功处理：读取 data.count
+    const count = res.data?.data?.count || 0
+    ElMessage.success({
+      message: `连接成功！找到 ${count} 个音频文件`,
+      duration: 3000, // 显示 3 秒
+    })
     
   } catch (error) {
-    const errMsg = error.response?.data?.message || error.response?.data?.error || error.message
-    console.error('测试失败详情:', error.response?.data)
+    // ❌ 失败处理：显示错误信息
+    const errMsg = error.response?.data?.message || error.message || '未知错误'
     
-    // 特殊处理 404 错误，给用户更友好的提示
-    if (error.response?.status === 404 && errMsg.includes('not found')) {
-      ElMessage.error('测试失败：未找到配置。请先点击“保存配置”，然后再试。')
-    } else {
-      ElMessage.error('连接失败：' + errMsg)
+    // 提取 "连接失败：" 后面的内容，避免重复显示
+    let displayMsg = errMsg
+    if (errMsg.includes('连接失败：')) {
+      displayMsg = errMsg.split('连接失败：')[1]
     }
+
+    ElMessage.error({
+      message: `连接失败：${displayMsg}`,
+      duration: 5000, // 错误显示久一点
+    })
   } finally {
     testing.value = false
   }
