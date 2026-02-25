@@ -1633,7 +1633,7 @@ func (h *MusicHandler) SaveWebDAVConfig(c *gin.Context) {
 func (h *MusicHandler) TestWebDAVConfig(c *gin.Context) {
 	var req WebDAVConfigRequest
 
-	// 1. 接收前端传来的参数 (允许不保存直接测试)
+	// 1. 接收前端传来的参数 (URL, Username, Password, RootPath)
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"code":    400,
@@ -1650,32 +1650,59 @@ func (h *MusicHandler) TestWebDAVConfig(c *gin.Context) {
 		return
 	}
 
-	// 默认路径
+	// 默认路径处理 (对齐 app.js 可能的默认行为)
 	if req.RootPath == "" {
 		req.RootPath = "/dav"
 	}
 
-	// 2. 创建客户端进行测试
+	log.Printf("[WebDAV Test] Testing connection to: %s (Path: %s, User: %s)", req.URL, req.RootPath, req.Username)
+
+	// 2. 创建客户端 (使用传入的参数)
 	client := webdav.NewClientNoCheck(req.URL, req.Username, req.Password, req.RootPath)
 
-	// 3. 尝试获取文件列表
-	files, err := client.ListMP3Files()
+	// 3. ✅ 关键修复：使用递归查找，确保能扫到子目录下的文件 (解决显示 0 个的问题)
+	files, err := client.ListMP3FilesRecursive()
 
-	// 4. 处理结果
+	// 如果递归查找返回空或报错，尝试只查当前目录 (兼容模式)
+	if err != nil || len(files) == 0 {
+		log.Printf("[WebDAV Test] Recursive search found %d files (err: %v). Trying flat list...", len(files), err)
+		flatFiles, flatErr := client.ListMP3Files()
+		if flatErr == nil && len(flatFiles) > 0 {
+			files = flatFiles
+			err = nil
+		} else if len(files) == 0 && len(flatFiles) == 0 {
+			// 真的没找到文件，尝试列出所有文件看看目录下到底有啥 (调试用)
+			allItems, readErr := client.ReadDirAll(req.RootPath)
+			if readErr == nil && len(allItems) > 0 {
+				log.Printf("[WebDAV Test] Directory '%s' contains %d items, but no MP3s found.", req.RootPath, len(allItems))
+				// 构造一个友好的提示
+				err = fmt.Errorf("目录中存在 %d 个文件，但未发现 .mp3 格式文件。请检查路径或文件格式。", len(allItems))
+			} else if readErr != nil {
+				err = fmt.Errorf("读取目录失败：%v", readErr)
+			} else {
+				err = fmt.Errorf("目录为空")
+			}
+		}
+	}
+
+	// 4. 处理测试结果
+	now := time.Now()
+
+	// 尝试更新数据库中的测试状态 (如果有记录的话)
+	var dbConfig models.WebDAVConfig
+	dbHasRecord := h.db.First(&dbConfig).Error == nil
+
 	if err != nil {
 		errMsg := err.Error()
+		log.Printf("[WebDAV Test] FAILED: %s", errMsg)
 
-		// 尝试更新数据库状态 (如果有记录)
-		var dbConfig models.WebDAVConfig
-		if h.db.First(&dbConfig).Error == nil {
+		if dbHasRecord {
 			dbConfig.TestStatus = "failed"
 			dbConfig.TestError = errMsg
-			now := time.Now()
 			dbConfig.LastTest = &now
 			h.db.Save(&dbConfig)
 		}
 
-		// 返回简洁的错误信息
 		c.JSON(http.StatusServiceUnavailable, gin.H{
 			"code":    503,
 			"message": "连接失败：" + getShortErrorMsg(errMsg),
@@ -1684,27 +1711,27 @@ func (h *MusicHandler) TestWebDAVConfig(c *gin.Context) {
 	}
 
 	// 5. 成功！
-	// 更新数据库状态 (如果有记录)
-	var dbConfig models.WebDAVConfig
-	if h.db.First(&dbConfig).Error == nil {
+	count := len(files)
+	log.Printf("[WebDAV Test] SUCCESS: Found %d MP3 files.", count)
+
+	if dbHasRecord {
 		dbConfig.TestStatus = "success"
 		dbConfig.TestError = ""
-		now := time.Now()
 		dbConfig.LastTest = &now
 		h.db.Save(&dbConfig)
 	}
 
-	// ✅ 关键：返回文件数量
+	// ✅ 返回文件数量
 	c.JSON(http.StatusOK, gin.H{
 		"code":    0,
 		"message": "连接成功",
 		"data": gin.H{
-			"count": len(files), // 文件数量
+			"count": count,
 		},
 	})
 }
 
-// getShortErrorMsg 提取简短的错误信息，避免返回冗长的堆栈
+// getShortErrorMsg 辅助函数：提取简短错误信息
 func getShortErrorMsg(err string) string {
 	if strings.Contains(err, "401") {
 		return "用户名或密码错误"
@@ -1713,7 +1740,7 @@ func getShortErrorMsg(err string) string {
 		return "路径不存在"
 	}
 	if strings.Contains(err, "405") {
-		return "路径禁止访问 (请尝试 /dav 或 /)"
+		return "方法不允许 (请尝试根路径为 / 或 /dav)"
 	}
 	if strings.Contains(err, "timeout") {
 		return "连接超时"
@@ -1721,7 +1748,6 @@ func getShortErrorMsg(err string) string {
 	if strings.Contains(err, "connection refused") {
 		return "无法连接服务器"
 	}
-	// 截取前 100 个字符，防止太长
 	if len(err) > 100 {
 		return err[:100] + "..."
 	}

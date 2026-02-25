@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"strings"
 	"time"
@@ -30,6 +31,10 @@ type FileInfo struct {
 	Name  string
 	Size  int64
 	IsDir bool
+}
+
+func (c *Client) ReadDirAll(path string) ([]os.FileInfo, error) {
+	return c.listClient.ReadDir(path)
 }
 
 func NewClientWithConfig(urlStr, username, password, rootPath string) (*Client, error) {
