@@ -106,19 +106,29 @@ const save = async () => {
     ElMessage.warning('请填写服务器地址')
     return
   }
-  
-  if (!form.value.rootPath) {
-    form.value.rootPath = '/dav'
+
+  // ✅ 关键修复：显式构造 payload
+  const payload = {
+    url: form.value.url,
+    username: form.value.username,
+    password: form.value.password,
+    // 1. 键名使用 'root_path' (与后端 json 标签一致)
+    // 2. 如果 form.value.rootPath 为空，强制设为 '/dav'
+    root_path: form.value.rootPath && form.value.rootPath.trim() !== '' 
+               ? form.value.rootPath 
+               : '/dav',
+    enabled: form.value.enabled
   }
 
-  saving.value = true
+  console.log('🚀 准备发送的保存数据:', payload) // 调试用：在浏览器控制台确认 root_path 有值
+
   try {
-    await api.saveWebDAVConfig(form.value)
+    await api.saveWebDAVConfig(payload)
     ElMessage.success('保存成功')
+    // 保存成功后重新加载配置，确保显示的是数据库里的最新值
+    loadConfig()
   } catch (error) {
-    ElMessage.error('保存失败：' + (error.message || '未知错误'))
-  } finally {
-    saving.value = false
+    ElMessage.error('保存失败：' + (error.response?.data?.message || error.message))
   }
 }
 
@@ -127,51 +137,32 @@ const testConn = async () => {
     ElMessage.warning('请先填写服务器地址')
     return
   }
-  
-  const payload = { ...form.value }
-  if (!payload.rootPath) {
-    payload.rootPath = '/dav'
+
+  const payload = {
+    url: form.value.url,
+    username: form.value.username,
+    password: form.value.password,
+    root_path: form.value.rootPath && form.value.rootPath.trim() !== '' 
+               ? form.value.rootPath 
+               : '/dav',
+    enabled: form.value.enabled
   }
 
   testing.value = true
   try {
-    // 1. 先静默保存一次 (确保数据库有记录，防止旧逻辑报错)
-    try {
-      await api.saveWebDAVConfig(payload)
-    } catch (e) {
-      // 保存失败也不影响测试
-    }
-
-    // 2. 发起测试请求
+    // 先静默保存，确保数据库有记录（兼容旧版后端逻辑）
+    try { await api.saveWebDAVConfig(payload) } catch (e) {}
+    
     const res = await api.testWebDAVConfig(payload)
-    let count = 0
-    if (res.data && res.data.data && typeof res.data.data.count === 'number') {
-      count = res.data.data.count
-    } else if (res.data && typeof res.data.count === 'number') {
-      // 兼容直接返回 count 的情况 (以防万一)
-      count = res.data.count
-    }
-
+    const count = res.data?.data?.count || 0
     ElMessage.success(`连接成功！找到 ${count} 个音频文件`)
-    
   } catch (error) {
-    // ❌ 失败处理：显示错误信息
-    const errMsg = error.response?.data?.message || error.message || '未知错误'
-    
-    // 提取 "连接失败：" 后面的内容，避免重复显示
-    let displayMsg = errMsg
-    if (errMsg.includes('连接失败：')) {
-      displayMsg = errMsg.split('连接失败：')[1]
-    }
-
-    ElMessage.error({
-      message: `连接失败：${displayMsg}`,
-    })
+    const errMsg = error.response?.data?.message || error.message
+    ElMessage.error('连接失败：' + errMsg)
   } finally {
     testing.value = false
   }
 }
-
 const deleteConfig = async () => {
   try {
     await ElMessageBox.confirm('确定要删除当前的 WebDAV 配置吗？此操作不可恢复。', '警告', { 

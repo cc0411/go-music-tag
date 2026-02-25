@@ -1593,7 +1593,7 @@ func (h *MusicHandler) SaveWebDAVConfig(c *gin.Context) {
 
 	// ✅ 关键修复：如果前端传来的 RootPath 为空，强制赋予默认值 "/dav"
 	// 这样可以防止数据库存入空字符串，导致后续扫描失败
-	if req.RootPath == "" {
+	if req.RootPath == "" || strings.TrimSpace(req.RootPath) == "" {
 		req.RootPath = "/dav"
 		log.Printf("[WebDAV Save] RootPath is empty, setting default to: %s", req.RootPath)
 	}
