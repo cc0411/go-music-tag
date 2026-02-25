@@ -7,6 +7,7 @@ export const usePlayerStore = defineStore('player', () => {
   const playlist = ref([])
   const currentTrackIndex = ref(-1)
   const isPlaying = ref(false)
+  const playMode = ref('order')
   const audio = new Audio()
 
   // ✅ 计算属性：安全地获取当前歌曲对象
@@ -103,13 +104,40 @@ export const usePlayerStore = defineStore('player', () => {
       isPlaying.value = true
     }
   }
-
+ // ✅ 新增：切换播放模式
+ const toggleMode = () => {
+  const modes = ['order', 'random', 'single']
+  const currentIndex = modes.indexOf(playMode.value)
+  playMode.value = modes[(currentIndex + 1) % modes.length]
+}
   // 下一首
   const playNext = () => {
     if (playlist.value.length === 0) return
-    let nextIdx = currentTrackIndex.value + 1
-    if (nextIdx >= playlist.value.length) nextIdx = 0 // 循环
-    console.log('⏭️ 下一首索引:', nextIdx)
+
+    // 单曲循环逻辑
+    if (playMode.value === 'single') {
+      audio.currentTime = 0
+      audio.play()
+      return
+    }
+
+    let nextIdx
+    if (playMode.value === 'random') {
+      // 随机逻辑
+      if (playlist.value.length === 1) {
+        nextIdx = 0
+      } else {
+        do {
+          nextIdx = Math.floor(Math.random() * playlist.value.length)
+        } while (nextIdx === currentTrackIndex.value)
+      }
+    } else {
+      // 顺序逻辑
+      nextIdx = currentTrackIndex.value + 1
+      if (nextIdx >= playlist.value.length) nextIdx = 0
+    }
+
+    currentTrackIndex.value = nextIdx
     playTrack(playlist.value[nextIdx])
   }
 
@@ -119,6 +147,13 @@ export const usePlayerStore = defineStore('player', () => {
     let prevIdx = currentTrackIndex.value - 1
     if (prevIdx < 0) prevIdx = playlist.value.length - 1 // 循环
     playTrack(playlist.value[prevIdx])
+  }
+
+  const playAtIndex = (index) => {
+    if (index >= 0 && index < playlist.value.length) {
+      currentTrackIndex.value = index
+      playTrack(playlist.value[index])
+    }
   }
 
   // 拖拽进度
@@ -153,6 +188,9 @@ export const usePlayerStore = defineStore('player', () => {
     currentTrackIndex,
     isPlaying,
     audio,
+    playMode, // 暴露模式
+    toggleMode, // 暴露切换方法
+    playAtIndex, // 暴露列表播放方法
     loadPlaylist,
     playTrack,
     togglePlay,
