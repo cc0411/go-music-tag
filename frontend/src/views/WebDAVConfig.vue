@@ -144,13 +144,15 @@ const testConn = async () => {
 
     // 2. 发起测试请求
     const res = await api.testWebDAVConfig(payload)
-    
-    // ✅ 成功处理：读取 data.count
-    const count = res.data?.data?.count || 0
-    ElMessage.success({
-      message: `连接成功！找到 ${count} 个音频文件`,
-      duration: 3000, // 显示 3 秒
-    })
+    let count = 0
+    if (res.data && res.data.data && typeof res.data.data.count === 'number') {
+      count = res.data.data.count
+    } else if (res.data && typeof res.data.count === 'number') {
+      // 兼容直接返回 count 的情况 (以防万一)
+      count = res.data.count
+    }
+
+    ElMessage.success(`连接成功！找到 ${count} 个音频文件`)
     
   } catch (error) {
     // ❌ 失败处理：显示错误信息
@@ -164,7 +166,6 @@ const testConn = async () => {
 
     ElMessage.error({
       message: `连接失败：${displayMsg}`,
-      duration: 5000, // 错误显示久一点
     })
   } finally {
     testing.value = false

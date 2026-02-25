@@ -1591,35 +1591,66 @@ func (h *MusicHandler) SaveWebDAVConfig(c *gin.Context) {
 		return
 	}
 
+	// ✅ 关键修复：如果前端传来的 RootPath 为空，强制赋予默认值 "/dav"
+	// 这样可以防止数据库存入空字符串，导致后续扫描失败
+	if req.RootPath == "" {
+		req.RootPath = "/dav"
+		log.Printf("[WebDAV Save] RootPath is empty, setting default to: %s", req.RootPath)
+	}
+
 	var config models.WebDAVConfig
 	result := h.db.First(&config)
 
 	now := time.Now()
 	if result.Error == gorm.ErrRecordNotFound {
+		// 创建新记录
 		config = models.WebDAVConfig{
 			URL:        req.URL,
 			Username:   req.Username,
 			Password:   req.Password,
-			RootPath:   req.RootPath,
+			RootPath:   req.RootPath, // 此时一定是 "/dav" 或用户填写的值
 			Enabled:    req.Enabled,
 			TestStatus: "pending",
 			CreatedAt:  now,
 			UpdatedAt:  now,
 		}
-		h.db.Create(&config)
+		if err := h.db.Create(&config).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"code":    500,
+				"message": "Failed to create config: " + err.Error(),
+			})
+			return
+		}
+	} else if result.Error != nil {
+		// 其他数据库错误
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    500,
+			"message": "Database error: " + result.Error.Error(),
+		})
+		return
 	} else {
+		// 更新现有记录
 		config.URL = req.URL
 		config.Username = req.Username
+		// 只有当密码不为空时才更新 (防止前端没传密码把数据库的覆盖了)
 		if req.Password != "" {
 			config.Password = req.Password
 		}
-		config.RootPath = req.RootPath
+		config.RootPath = req.RootPath // ✅ 确保更新后的路径也是有效的
 		config.Enabled = req.Enabled
 		config.UpdatedAt = now
-		config.TestStatus = "pending"
-		h.db.Save(&config)
+		config.TestStatus = "pending" // 重置测试状态
+
+		if err := h.db.Save(&config).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"code":    500,
+				"message": "Failed to update config: " + err.Error(),
+			})
+			return
+		}
 	}
 
+	// 重置 WebDAV 客户端缓存，确保下次使用新配置
 	h.resetWebDAVClient()
 
 	c.JSON(http.StatusOK, gin.H{
