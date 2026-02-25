@@ -1630,50 +1630,98 @@ func (h *MusicHandler) SaveWebDAVConfig(c *gin.Context) {
 }
 
 func (h *MusicHandler) TestWebDAVConfig(c *gin.Context) {
-	var config models.WebDAVConfig
-	result := h.db.First(&config)
+	var req WebDAVConfigRequest // 使用请求结构体接收前端参数
 
-	if result.Error != nil {
-		c.JSON(http.StatusNotFound, gin.H{
-			"code":    404,
-			"message": "WebDAV config not found",
+	// 1. 绑定 JSON 数据
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "参数错误：" + err.Error(),
 		})
 		return
 	}
 
-	client := webdav.NewClientNoCheck(config.URL, config.Username, config.Password, config.RootPath)
+	// 2. 基本验证
+	if req.URL == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"code":    400,
+			"message": "服务器地址不能为空",
+		})
+		return
+	}
+
+	// 3. 默认路径处理
+	if req.RootPath == "" {
+		req.RootPath = "/dav"
+	}
+
+	// 4. ✅ 关键：直接使用前端传来的参数创建客户端进行测试
+	// 这样即使数据库里没有保存过配置，也能测试成功
+	client := webdav.NewClientNoCheck(req.URL, req.Username, req.Password, req.RootPath)
 
 	now := time.Now()
+
+	// 尝试列出目录文件 (测试连接是否通畅)
 	files, err := client.ListMP3Files()
 
 	if err != nil {
-		config.TestStatus = "failed"
-		config.TestError = err.Error()
-		config.LastTest = &now
-		h.db.Save(&config)
+		errMsg := err.Error()
 
-		c.JSON(http.StatusServiceUnavailable, gin.H{
-			"code":    503,
-			"message": "WebDAV connection failed",
-			"data": gin.H{
-				"error": err.Error(),
-			},
-		})
+		// 更新数据库中的测试状态 (如果数据库里有记录的话)
+		// 这里我们尝试更新，但如果没记录也不报错
+		var dbConfig models.WebDAVConfig
+		if h.db.First(&dbConfig).Error == nil {
+			dbConfig.TestStatus = "failed"
+			dbConfig.TestError = errMsg
+			dbConfig.LastTest = &now
+			h.db.Save(&dbConfig)
+		}
+
+		// 根据错误类型返回更友好的提示
+		if strings.Contains(errMsg, "401") {
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"code":    401,
+				"message": "认证失败：用户名或密码错误",
+				"data":    gin.H{"error": errMsg},
+			})
+		} else if strings.Contains(errMsg, "404") {
+			c.JSON(http.StatusNotFound, gin.H{
+				"code":    404,
+				"message": "路径不存在：" + req.RootPath,
+				"data":    gin.H{"error": errMsg},
+			})
+		} else if strings.Contains(errMsg, "405") {
+			c.JSON(http.StatusMethodNotAllowed, gin.H{
+				"code":    405,
+				"message": "方法不允许：服务器禁止访问该路径 (PROPFIND 405)，请检查根路径是否正确 (尝试 / 或 /dav)",
+				"data":    gin.H{"error": errMsg},
+			})
+		} else {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"code":    503,
+				"message": "连接失败：" + errMsg,
+				"data":    gin.H{"error": errMsg},
+			})
+		}
 		return
 	}
 
-	config.TestStatus = "success"
-	config.TestError = ""
-	config.LastTest = &now
-	h.db.Save(&config)
+	// 5. 成功！更新数据库状态
+	var dbConfig models.WebDAVConfig
+	if h.db.First(&dbConfig).Error == nil {
+		dbConfig.TestStatus = "success"
+		dbConfig.TestError = ""
+		dbConfig.LastTest = &now
+		h.db.Save(&dbConfig)
+	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"code":    0,
-		"message": "WebDAV connection successful",
+		"message": "连接成功！找到 " + fmt.Sprintf("%d", len(files)) + " 个音频文件",
 		"data": gin.H{
-			"files_found": len(files),
-			"url":         config.URL,
-			"root_path":   config.RootPath,
+			"count":     len(files),
+			"url":       req.URL,
+			"root_path": req.RootPath,
 		},
 	})
 }
