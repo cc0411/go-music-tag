@@ -16,7 +16,7 @@
       <router-view />
     </el-main>
 
-    <!-- 底部播放器 (现在由 AudioPlayer 自己 fixed 定位) -->
+    <!-- 底部播放器-->
     <AudioPlayer />
   </div>
 </template>

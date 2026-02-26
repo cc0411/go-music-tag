@@ -36,6 +36,17 @@ export const usePlayerStore = defineStore('player', () => {
     }
   }
 
+  
+  const addTrackToQueue = (track) => {
+    playlist.value.push(track)
+    // 可选：如果当前没在播放，可以直接播放这首
+    // if (!audio.value.paused) { ... }
+  }
+  
+
+
+
+
   // ✅ 核心修复：播放歌曲
   const playTrack = (track, list = null) => {
     console.log('🎵 准备播放:', track.title || track.file_name, 'ID:', track.id)
@@ -181,16 +192,16 @@ export const usePlayerStore = defineStore('player', () => {
     console.error('💥 音频错误事件:', e)
     isPlaying.value = false
   })
-
   return {
     playlist,
     currentTrack,
     currentTrackIndex,
     isPlaying,
     audio,
-    playMode, // 暴露模式
-    toggleMode, // 暴露切换方法
-    playAtIndex, // 暴露列表播放方法
+    playMode,
+    addTrackToQueue,
+    toggleMode, 
+    playAtIndex, 
     loadPlaylist,
     playTrack,
     togglePlay,

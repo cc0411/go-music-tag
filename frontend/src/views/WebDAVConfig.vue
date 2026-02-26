@@ -65,7 +65,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onActivated } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { 
   Cloudy, Refresh, FolderChecked, Connection, Delete 
@@ -76,9 +76,9 @@ const saving = ref(false)
 const testing = ref(false)
 
 const form = ref({
-  url: 'http://192.168.1.3:9000',
-  username: 'music',
-  password: 'music',
+  url: '',
+  username: '',
+  password: '',
   rootPath: '/dav', 
   enabled: false
 })
@@ -95,9 +95,18 @@ const loadConfig = async () => {
         rootPath: data.rootPath || data.root_path || '/dav', 
         enabled: data.enabled !== undefined ? data.enabled : true
       }
+    }else {
+      form.value = {
+        url: '',
+        username: '',
+        password: '',
+        rootPath: '/dav',
+        enabled: false
+      }
     }
   } catch (error) {
     console.error('加载配置失败', error)
+    form.value = { url: '', username: '', password: '', rootPath: '/dav', enabled: false }
   }
 }
 
@@ -107,25 +116,20 @@ const save = async () => {
     return
   }
 
-  // ✅ 关键修复：显式构造 payload
   const payload = {
     url: form.value.url,
     username: form.value.username,
     password: form.value.password,
-    // 1. 键名使用 'root_path' (与后端 json 标签一致)
-    // 2. 如果 form.value.rootPath 为空，强制设为 '/dav'
     root_path: form.value.rootPath && form.value.rootPath.trim() !== '' 
                ? form.value.rootPath 
                : '/dav',
     enabled: form.value.enabled
   }
 
-  console.log('🚀 准备发送的保存数据:', payload) // 调试用：在浏览器控制台确认 root_path 有值
 
   try {
     await api.saveWebDAVConfig(payload)
     ElMessage.success('保存成功')
-    // 保存成功后重新加载配置，确保显示的是数据库里的最新值
     loadConfig()
   } catch (error) {
     ElMessage.error('保存失败：' + (error.response?.data?.message || error.message))
@@ -150,7 +154,6 @@ const testConn = async () => {
 
   testing.value = true
   try {
-    // 先静默保存，确保数据库有记录（兼容旧版后端逻辑）
     try { await api.saveWebDAVConfig(payload) } catch (e) {}
     
     const res = await api.testWebDAVConfig(payload)
@@ -187,6 +190,9 @@ const deleteConfig = async () => {
 }
 
 onMounted(() => {
+  loadConfig()
+})
+onActivated(() => {
   loadConfig()
 })
 </script>

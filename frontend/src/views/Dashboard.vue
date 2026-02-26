@@ -159,7 +159,6 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { 
-  // ✅ 确保这里引入的图标都是真实存在的
   Headset, User, Collection, PictureFilled, Refresh, 
   Promotion, Cloudy
 } from '@element-plus/icons-vue'
@@ -190,7 +189,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-/* 样式保持不变，直接复制之前的即可 */
 .dashboard-container {
   padding: 20px;
   background-color: #f8fafc;

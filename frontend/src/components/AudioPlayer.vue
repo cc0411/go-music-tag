@@ -117,7 +117,6 @@ const formatTime = (s) => {
 </script>
 
 <style scoped lang="scss">
-/* --- ✅ 核心修复：根元素直接 fixed 定位 --- */
 .player-bar-fixed {
   position: fixed;
   bottom: 0;

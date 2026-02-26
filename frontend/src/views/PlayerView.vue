@@ -78,7 +78,7 @@
   
 <script setup>
 import { ref, computed, nextTick, onMounted, onUnmounted } from 'vue'
-import { Headset, Refresh } from '@element-plus/icons-vue'
+import { Headset } from '@element-plus/icons-vue'
 import { usePlayerStore } from '@/stores/player'
 import axios from 'axios'
 
@@ -148,7 +148,7 @@ onMounted(() => {
   loadLyrics()
 })
 
-// ✅ 核心修复：组件卸载时移除监听，防止内存泄漏
+// 组件卸载时移除监听，防止内存泄漏
 onUnmounted(() => {
   const audio = playerStore.audio
   audio.removeEventListener('timeupdate', handleTimeUpdate)
@@ -256,7 +256,6 @@ const formatTime = (s) => {
 </script>
   
   <style scoped lang="scss">
-  /* ... (样式部分保持不变，直接复用上一轮的样式) ... */
   .player-view {
     height: calc(100vh - 90px);
     width: 100%;

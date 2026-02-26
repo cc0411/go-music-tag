@@ -1,7 +1,7 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
-// https://vite.dev/config/
+
 export default defineConfig({
   plugins: [vue()],
   resolve: {
@@ -13,8 +13,16 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://192.168.1.3:9999', // 你的 Go 后端地址
+        target: 'http://192.168.1.3:9999', // 后端地址
         changeOrigin: true
+      }
+    }
+  },
+  css: {
+    preprocessorOptions: {
+      scss: {
+        api: 'modern', 
+        silenceDeprecations: ['legacy-js-api'],
       }
     }
   }

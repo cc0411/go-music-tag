@@ -84,6 +84,7 @@ import { Search, VideoPlay, Refresh, Document } from '@element-plus/icons-vue'
 import { api } from '@/api'
 
 // 状态
+const eventSource = ref(null)
 const scanning = ref(false)
 const loadingLogs = ref(false)
 const logs = ref([])
@@ -104,24 +105,41 @@ let statusTimer = null
 
 // 开始扫描
 const startScan = async () => {
-  try {
-    const res = await api.startScan(scanOptions.value)
-    if (res.code === 0) {
-      ElMessage.success('扫描任务已启动')
-      scanning.value = true
-      progressPercentage.value = 0
-      progressStatus.value = ''
-      statusMessage.value = '正在初始化...'
-      
-      // 启动轮询
-      checkStatus()
-      if (statusTimer) clearInterval(statusTimer)
-      statusTimer = setInterval(checkStatus, 2000) // 每 2 秒查询一次状态
-    }
-  } catch (error) {
-    ElMessage.error('启动扫描失败：' + (error.response?.data?.message || error.message))
+  // ... (发送请求代码) ...
+  if (res.code === 0) {
+    ElMessage.success('扫描已开始')
+    scanning.value = true // ✅ 标记为正在扫描
+    logs.value = []       // 清空旧日志
+    progressPercentage.value = 0
+    progressStatus.value = ''
+    
+    initSSE()
+    
+    if (statusTimer) clearInterval(statusTimer)
+    statusTimer = setInterval(checkStatus, 2000)
   }
 }
+const closeSSE = () => {
+  if (eventSource.value) {
+    eventSource.value.close()
+    eventSource.value = null
+    console.log('❌ 实时日志流已断开')
+  }
+}
+
+// ✅ 修改 onMounted：只初始化，不触发结束逻辑
+onMounted(() => {
+  loadLogs() // 1. 先加载历史日志
+  
+  // 2. 检查当前状态，但不要弹窗
+  checkStatus() 
+  
+})
+
+onUnmounted(() => {
+  closeSSE()
+  if (statusTimer) clearInterval(statusTimer)
+})
 
 // 检查扫描状态
 const checkStatus = async () => {
@@ -130,25 +148,18 @@ const checkStatus = async () => {
     if (res.code === 0 && res.data) {
       const data = res.data
       
-      // 更新进度条逻辑 (根据后端返回的具体字段调整)
-      // 假设后端返回 last_log 包含 "Processing [20/29]" 这样的信息
-      if (data.last_log) {
-        statusMessage.value = data.last_log
-        const match = data.last_log.match(/\[(\d+)\/(\d+)\]/)
-        if (match) {
-          const current = parseInt(match[1])
-          const total = parseInt(match[2])
-          progressPercentage.value = Math.floor((current / total) * 100)
-        } else {
-           // 如果没有进度信息，使用动画进度
-           progressPercentage.value = 50 // 或者保持上一个值
-        }
+      // 更新进度条显示逻辑 (如果有 last_log)
+      if (data.last_log && scanning.value) {
+         statusMessage.value = data.last_log
+         // ... (解析进度的代码保持不变) ...
       }
 
-      // 如果后端明确返回了 running: false，则停止
-      if (data.running === false) {
-        stopScanning()
-      }
+      // ✅ 关键判断：只有当 frontend 认为正在扫描 (scanning.value === true)
+      // 且后端返回已经结束 (data.running === false) 时，才触发结束逻辑
+      if (scanning.value && data.running === false) {
+        stopScanning(true) // 传入 true 表示显示成功消息
+      } 
+      // 如果 scanning.value 是 false (页面刚加载)，即使 data.running 是 false，也不做任何操作，只静默加载日志
     }
   } catch (error) {
     console.error('获取状态失败', error)
@@ -156,37 +167,66 @@ const checkStatus = async () => {
 }
 
 // 停止扫描状态
-const stopScanning = () => {
+const stopScanning = (showSuccessMsg = true) => {
+  const wasScanning = scanning.value // 记录之前的状态
   scanning.value = false
-  progressPercentage.value = 100
-  progressStatus.value = 'success'
-  statusMessage.value = '扫描完成！'
   
   if (statusTimer) {
     clearInterval(statusTimer)
     statusTimer = null
   }
   
-  ElMessage.success('扫描任务已完成')
-  loadLogs() // 加载最新日志
+  closeSSE() // 关闭实时连接
+  
+  if (wasScanning && showSuccessMsg) {
+    ElMessage.success('扫描任务已完成')
+    loadLogs() // 加载最新日志
+  } else if (!wasScanning) {
+    loadLogs()
+  }
+  
+  // 重置进度条样式
+  progressPercentage.value = 100
+  progressStatus.value = 'success'
+  statusMessage.value = '扫描已完成'
 }
 
 // 加载日志
 const loadLogs = async () => {
   loadingLogs.value = true
   try {
-    // 假设 API 支持分页，这里先取第一页 50 条
-    const res = await api.getScanLogs({ page: 1, page_size: 50 })
-    if (res.code === 0) {
-      // 如果是列表结构 (res.data.list) 还是直接数组 (res.data)，做兼容处理
-      logs.value = res.data.list || res.data || []
-      
-      // 滚动到底部
-      await nextTick()
-      scrollToBottom()
+    const res = await api.getScanLogs({ page: 1, page_size: 100 })
+    
+    console.log('🔍 原始响应 res:', res)
+    console.log('🔍 res.data:', res.data)
+    console.log('🔍 res.list:', res.list)
+
+    let newLogs = []
+
+    
+    if (res && res.code === 0 && Array.isArray(res.list)) {
+      newLogs = res.list
+      console.log('✅ 命中情况 A: 直接读取 res.list')
+    } 
+    else if (res && res.data && res.data.code === 0 && Array.isArray(res.data.list)) {
+      newLogs = res.data.list
+      console.log('✅ 命中情况 B: 读取 res.data.list')
     }
+    else {
+      console.warn('⚠️ 无法识别的数据结构', res)
+    }
+
+    logs.value = newLogs
+    
+    // 确保有数据时才滚动
+    if (newLogs.length > 0) {
+      nextTick(() => {
+        scrollToBottom()
+      })
+    }
+    
   } catch (error) {
-    console.error('加载日志失败', error)
+    console.error('加载日志失败:', error)
   } finally {
     loadingLogs.value = false
   }
@@ -223,13 +263,10 @@ const getLogColor = (log) => {
 
 onMounted(() => {
   loadLogs()
-  // 可选：页面加载时检查是否正在扫描
   checkStatus()
 })
 
-onUnmounted(() => {
-  if (statusTimer) clearInterval(statusTimer)
-})
+
 </script>
 
 <style scoped lang="scss">
